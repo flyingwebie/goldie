@@ -50,11 +50,21 @@ export type ScreenshotScene = {
   id: string;
   /** Flow in the app's `.argent/flows`: a name ("home") or a path under it ("goldie/home.yaml"). Its final step captures the screenshot. */
   flow: string;
-  /** Headline per locale. */
+  /**
+   * Headline per locale. Wrap words in asterisks to stress them ("Clear your
+   * *head*"); theme.emphasis decides how a stressed word stands out.
+   */
   headline: Record<Locale, string>;
   subhead?: Record<Locale, string>;
+  /** A short handwritten line above the headline ("Accept and", "24/7"), per locale. */
+  kicker?: Record<Locale, string>;
   /** Overrides the theme background for this scene. */
   background?: string;
+  /**
+   * An image cover-fitted over this tile's background, under everything else,
+   * relative to the config. Overrides theme.backgroundImage; "none" clears it.
+   */
+  backgroundImage?: string;
   /** Overrides theme.layout for this scene; a key from src/layouts.ts. */
   layout?: LayoutKey;
   /**
@@ -67,8 +77,14 @@ export type ScreenshotScene = {
 };
 
 /**
- * A layer drawn over the background and under the device. A badge is a text
- * pill in a corner; an image is any PNG placed by fractions of the tile.
+ * A layer on a tile. `back` layers (the default for badges, images, bubbles
+ * and ratings) sit over the background and copy, under the device; `front`
+ * layers sit over the device, which is how art breaks the frame: a mascot
+ * leaning on the phone, a card lifted out of the screen. Callouts default to
+ * `front`.
+ *
+ * Every placed layer takes `x`/`y` (its left and top) and `width` as fractions
+ * of one tile; a panorama's second tile starts at x = 1.
  */
 export type Decoration =
   | {
@@ -78,6 +94,7 @@ export type Decoration =
       /** Pill fill and text color; default to the headline color on a translucent white. */
       background?: string;
       color?: string;
+      layer?: DecorationLayer;
     }
   | {
       kind: "image";
@@ -90,7 +107,96 @@ export type Decoration =
       width: number;
       /** Degrees, clockwise, around the image centre. */
       rotate?: number;
+      /** Mirror horizontally, so one character art can face either way. */
+      flip?: boolean;
+      /** 0 to 1. */
+      opacity?: number;
+      /** A soft drop shadow under the art. */
+      shadow?: boolean;
+      layer?: DecorationLayer;
+    }
+  | {
+      /**
+       * A piece of the real screen, lifted out of the phone: a region of the
+       * capture, enlarged, with rounded corners and a shadow. The most
+       * effective way to point at one feature without a fake UI.
+       */
+      kind: "callout";
+      /** Which device's capture to cut from; the scene's own by default. */
+      capture?: "primary" | "secondary";
+      /** The region as fractions of the capture's width and height. */
+      from: { x: number; y: number; width: number; height: number };
+      x: number;
+      y: number;
+      /** Width as a fraction of the tile width; the height keeps the region's aspect. */
+      width: number;
+      rotate?: number;
+      /** Corner radius as a fraction of the tile width. Default 0.03. */
+      radius?: number;
+      /** Default true. */
+      shadow?: boolean;
+      /** A border color drawn around the card. */
+      border?: string;
+      layer?: DecorationLayer;
+    }
+  | {
+      /** A speech bubble: the user's problem in their own words, or the mascot talking. */
+      kind: "bubble";
+      text: Record<Locale, string>;
+      x: number;
+      y: number;
+      /** Maximum width as a fraction of the tile width; the bubble shrinks to its text. */
+      width: number;
+      /** Where the tail points from. Default "bottom-left". */
+      tail?: "bottom-left" | "bottom-right" | "top-left" | "top-right" | "none";
+      /** Default white fill, headline-colored text. */
+      background?: string;
+      color?: string;
+      /** "script" uses theme.scriptFontFamily, "sans" the headline font. Default "sans". */
+      font?: "sans" | "script";
+      /** Type size as a fraction of the tile width. Default 0.045. */
+      size?: number;
+      rotate?: number;
+      layer?: DecorationLayer;
+    }
+  | {
+      /** Social proof: stars, a score and a line of text inside laurels. */
+      kind: "rating";
+      /** The big number, e.g. "4.8". */
+      value: string;
+      /** A line under the stars, e.g. "200k+ happy users", per locale. */
+      label?: Record<Locale, string>;
+      x: number;
+      y: number;
+      width: number;
+      /** Stars and text color; the headline color by default. */
+      color?: string;
+      /** Default true. */
+      laurels?: boolean;
+      /** A rounded plate behind it, for legibility over art or UI. */
+      background?: string;
+      layer?: DecorationLayer;
     };
+
+export type DecorationLayer = "back" | "front";
+
+/** How a headline's *stressed* words stand out. */
+export const EMPHASIS_STYLES = ["color", "highlight", "underline", "circle", "script"] as const;
+export type EmphasisStyle = (typeof EMPHASIS_STYLES)[number];
+
+/** Headline type beyond font and color. */
+export type HeadlineStyle = {
+  /** Multiplies the layout's headline size. 1.3 or more for poster-like tiles. Default 1. */
+  scale?: number;
+  /** CSS font weight. Default 700. */
+  weight?: number;
+  /** Set the headline in capitals. */
+  uppercase?: boolean;
+  /** An outline drawn behind the fill; width as a fraction of the tile width (0.006 is bold). */
+  stroke?: { color: string; width: number };
+  /** A drop shadow; blur and offsetY as fractions of the tile width. */
+  shadow?: { color: string; blur: number; offsetY: number };
+};
 
 /**
  * The app preview video, built from short segments.
@@ -109,9 +215,94 @@ export type PreviewScene = {
     flow: string;
     /** Hold the last frame this long after the flow ends, in seconds. */
     holdSeconds?: number;
+    /**
+     * A caption shown over this segment, per locale. App Review Guideline
+     * 2.3.4 allows text overlays that explain the footage; the footage itself
+     * stays a plain screen recording.
+     */
+    caption?: Record<Locale, string>;
   }>;
   /** Optional audio bed relative to the config file. A silent AAC track is written when absent. */
   audio?: string;
+  /** Where segment captions sit. Default "bottom", clear of the navigation bar. */
+  captionPosition?: "top" | "bottom";
+};
+
+/**
+ * AI art for the tiles: backgrounds, mascots, 3D objects and stickers,
+ * generated once by `goldie art` into files next to the config and then used
+ * like any other image (theme.backgroundImage, theme.backdrop, image
+ * decorations). The real app screen is never generated: art surrounds the
+ * capture, it does not replace it.
+ */
+export type ArtConfig = {
+  /** Which image API to call. Keys come from OPENAI_API_KEY / FAL_KEY or a .env next to the config. */
+  provider: "openai" | "fal";
+  /** Overrides the provider's default image model. */
+  model?: string;
+  /** A style preset key from src/art/styles.ts, or a free-text art direction. */
+  style: string;
+  /** Brand colors woven into every prompt, as hex. */
+  palette?: string[];
+  /** Brand images every generation sees as references (mascot, logo, product), relative to the config. */
+  references?: string[];
+  /** Where generated files go, relative to the config. Default "art". */
+  dir?: string;
+  /** Refuse a run whose estimated cost exceeds this many US dollars. Default 5. */
+  budgetUsd?: number;
+  assets: ArtAsset[];
+};
+
+export type ArtAsset = {
+  /** File stem: `art/<id>.png`. */
+  id: string;
+  /**
+   * `background` and `scene` are opaque and fill a tile (`strip` aspect for a
+   * backdrop); `character`, `object` and `sticker` come out as transparent
+   * PNGs ready to overlap the device.
+   */
+  kind: "background" | "scene" | "character" | "object" | "sticker";
+  /** What to draw. The style, palette and kind add the rest of the prompt. */
+  prompt: string;
+  /** Default: portrait for opaque kinds, square for transparent ones. "strip" is a very wide backdrop. */
+  aspect?: "portrait" | "square" | "landscape" | "strip";
+  /** More reference images for this asset only, relative to the config. */
+  references?: string[];
+  /**
+   * Turn the still into a short video clip (fal image-to-video) for the promo
+   * video: `art/<id>.mp4`.
+   */
+  animate?: { prompt: string; seconds?: number; model?: string };
+};
+
+/**
+ * The social promo video (`goldie promo`): the designed tiles brought to life
+ * with kinetic headlines, devices sliding in and callouts popping, for
+ * TikTok, Reels, X, YouTube or the Play Store's promo link. Unlike the App
+ * Store preview it is marketing, so anything goes.
+ */
+export type PromoConfig = {
+  /** Output aspect ratios. Default ["9:16"]. */
+  formats?: Array<"9:16" | "4:5" | "1:1">;
+  /** Screenshot scene ids in play order. Default: every screenshot scene. */
+  scenes?: string[];
+  /** Seconds each scene holds, including its entrance. Default 3. */
+  secondsPerScene?: number;
+  /** A full-screen video (e.g. an animated art clip) played first, relative to the config. */
+  intro?: string;
+  /** The closing card. */
+  outro?: {
+    headline: Record<Locale, string>;
+    /** A call to action under it, e.g. "Download on the App Store". */
+    cta?: Record<Locale, string>;
+    /** App icon PNG relative to the config. */
+    icon?: string;
+    seconds?: number;
+  };
+  /** A music file relative to the config. Takes precedence over `music`. */
+  audio?: string;
+  /** Generate a music bed (fal) when no `audio` is given; cached in the art dir. */
+  music?: { prompt: string; model?: string };
 };
 
 export type Scene = ScreenshotScene | PreviewScene;
@@ -146,6 +337,25 @@ export type Theme = {
   screenOnly?: boolean;
   /** Decoration layers added to every screenshot scene. */
   decorations?: Decoration[];
+  /** Color of *stressed* headline words, their marks, and kickers. Defaults to headlineColor. */
+  accentColor?: string;
+  /** How *stressed* headline words stand out. Default "color". */
+  emphasis?: EmphasisStyle;
+  /** Font stack for kickers, script emphasis and script bubbles. Defaults to the bundled Caveat. */
+  scriptFontFamily?: string;
+  /** Headline size, weight, case, outline and shadow. */
+  headline?: HeadlineStyle;
+  /**
+   * An image cover-fitted over every tile's background, relative to the
+   * config, typically AI-generated art (`goldie art`).
+   */
+  backgroundImage?: string;
+  /**
+   * One wide image laid across the whole strip, each tile showing its slice,
+   * so the store page reads as one continuous world. Drawn over the
+   * background and any backgroundImage.
+   */
+  backdrop?: string;
 };
 
 /**
@@ -226,6 +436,10 @@ export type GoldieConfig = {
   theme: Theme;
   store: StoreListing;
   scenes: Scene[];
+  /** AI-generated art layers; see `goldie art`. */
+  art?: ArtConfig;
+  /** The social promo video; see `goldie promo`. */
+  promo?: PromoConfig;
 };
 
 export type LoadedConfig = GoldieConfig & {

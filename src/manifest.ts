@@ -99,12 +99,17 @@ export type StoreManifest = {
     /** The theme's default layout key. */
     layout: string;
     screenOnly: boolean;
-    /** Theme-level decorations; image `src` values are urls under out/web. */
+    /** Theme-level decorations; image `src` values are urls under out/web. Theme image paths are urls too. */
     decorations: Decoration[];
     scenes: Array<{
       id: string;
       headline: Record<string, string>;
       subhead?: Record<string, string>;
+      kicker?: Record<string, string>;
+      /** The scene's own CSS background, overriding the theme's. */
+      background?: string;
+      /** Url under out/web, or "none". */
+      backgroundImage?: string;
       layout?: string;
       secondScene?: string;
       decorations?: Decoration[];
@@ -213,17 +218,29 @@ export async function writeManifest(cfg: LoadedConfig): Promise<string> {
     });
   }
 
-  // Decoration images, copied so the browser can draw the same layers.
+  // Art and decoration images, copied so the browser draws the same layers.
+  // Two files may share a name in different folders, so each copy is keyed
+  // by its source path and numbered.
   const decorDir = join(webDir, "decor");
+  await rm(decorDir, { recursive: true, force: true });
   await mkdir(decorDir, { recursive: true });
+  const copied = new Map<string, string>();
+  const webAsset = async (src: string | undefined): Promise<string | undefined> => {
+    if (!src || src === "none") return src;
+    const abs = resolve(cfg.root, src);
+    let url = copied.get(abs);
+    if (!url) {
+      url = `decor/${copied.size}-${basename(abs)}`;
+      await copyFile(abs, join(webDir, url));
+      copied.set(abs, url);
+    }
+    return url;
+  };
   const webDecorations = async (list: Decoration[] | undefined) =>
     Promise.all(
-      (list ?? []).map(async (d) => {
-        if (d.kind !== "image") return d;
-        const name = basename(d.src);
-        await copyFile(resolve(cfg.root, d.src), join(decorDir, name));
-        return { ...d, src: `decor/${name}` };
-      }),
+      (list ?? []).map(async (d) =>
+        d.kind === "image" ? { ...d, src: (await webAsset(d.src))! } : d,
+      ),
     );
   const scenes: StoreManifest["design"]["scenes"] = [];
   for (const scene of cfg.scenes.filter(isScreenshot)) {
@@ -231,11 +248,19 @@ export async function writeManifest(cfg: LoadedConfig): Promise<string> {
       id: scene.id,
       headline: scene.headline,
       ...(scene.subhead ? { subhead: scene.subhead } : {}),
+      ...(scene.kicker ? { kicker: scene.kicker } : {}),
+      ...(scene.background ? { background: scene.background } : {}),
+      ...(scene.backgroundImage ? { backgroundImage: await webAsset(scene.backgroundImage) } : {}),
       ...(scene.layout ? { layout: scene.layout } : {}),
       ...(scene.secondScene ? { secondScene: scene.secondScene } : {}),
       ...(scene.decorations ? { decorations: await webDecorations(scene.decorations) } : {}),
     });
   }
+  const theme: Theme = {
+    ...cfg.theme,
+    backgroundImage: await webAsset(cfg.theme.backgroundImage),
+    backdrop: await webAsset(cfg.theme.backdrop),
+  };
 
   const assets: StoreManifest["assets"] = {};
   for (const deviceKey of cfg.devices) {
@@ -293,7 +318,7 @@ export async function writeManifest(cfg: LoadedConfig): Promise<string> {
     locales: cfg.locales,
     assets,
     design: {
-      theme: cfg.theme,
+      theme,
       frames,
       frameVariants,
       customFrameUrl: custom,

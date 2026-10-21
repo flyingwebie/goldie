@@ -20,6 +20,7 @@ export const LAYOUT_KEYS = [
   "panorama",
   "panorama-duo",
   "minimal",
+  "poster",
 ] as const;
 export type LayoutKey = (typeof LAYOUT_KEYS)[number];
 
@@ -78,6 +79,10 @@ export const TYPE = {
   padTop: 0.055,
   padBottom: 0.05,
   gap: 0.014,
+  /** The handwritten kicker above a headline, in the script face. */
+  kickerSize: 0.058,
+  kickerLineHeight: 1.1,
+  kickerWeight: 700,
 } as const;
 
 /** Badge pill geometry as fractions of the tile width (all but `inset`, of the shorter tile side). */
@@ -196,6 +201,15 @@ export const LAYOUTS: Record<LayoutKey, LayoutSpec> = {
     span: 1,
     copy: { position: "none", align: "center" },
     devices: single({ widthRatio: 0.92, x: 0.5, y: 0.5 }),
+  },
+  poster: {
+    key: "poster",
+    label: "Poster",
+    description:
+      "Copy on top and no device: the art carries the tile, as an opener or a story beat.",
+    span: 1,
+    copy: { position: "top", align: "center", heightRatio: 0.3 },
+    devices: [],
   },
 };
 

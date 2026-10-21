@@ -8,6 +8,10 @@ Copyright 2024 The Merriweather Project Authors (https://github.com/EbenSorkin/M
 Copyright 2011 The Montserrat Project Authors (https://github.com/JulietaUla/Montserrat)
 Copyright 2014-2021 Adobe (http://www.adobe.com/), with Reserved Font Name 'Source'. Noto is a trademark of Google Inc. (Noto Sans SC, https://github.com/notofonts/noto-cjk)
 Copyright 2022 The Noto Project Authors (https://github.com/notofonts/arabic). Noto is a trademark of Google Inc. (Noto Sans Arabic)
+Copyright 2020 The Anton Project Authors (https://github.com/googlefonts/AntonFont.git)
+Copyright 2022 The Bricolage Grotesque Project Authors (https://github.com/ateliertriay/bricolage)
+Copyright 2014 The Caveat Project Authors (https://github.com/googlefonts/caveat)
+Copyright 2022 The Instrument Serif Project Authors (https://github.com/Instrument/instrument-serif)
 
 This license is copied below, and is also available with a FAQ at:
 https://openfontlicense.org
