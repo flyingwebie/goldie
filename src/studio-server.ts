@@ -337,18 +337,22 @@ async function getSettings(configPath: string) {
       ? { set: true, source: located.source, last4: last4(located.value) }
       : { set: false, source: null };
   }
+  // Settings always offer the model and style pickers. With no art block
+  // yet, the provider defaults to the one with a key (fal first: it also
+  // covers cutouts, clips and music); saving creates the block via
+  // goldie.design.json (applyDesign).
   const art = cfg.art;
+  const defaultProvider = keys.fal.set || !keys.openai.set ? "fal" : "openai";
   return {
     keys,
-    art: art
-      ? {
-          configured: true,
-          provider: art.provider,
-          model: art.model ?? null,
-          draftModel: art.draftModel ?? null,
-          style: art.style,
-        }
-      : { configured: false },
+    art: {
+      configured: Boolean(art),
+      hasAssets: Boolean(art?.assets.length),
+      provider: art?.provider ?? defaultProvider,
+      model: art?.model ?? null,
+      draftModel: art?.draftModel ?? null,
+      style: art?.style ?? "",
+    },
     models: ART_MODELS,
     styles: Object.fromEntries(
       Object.entries(ART_STYLES).map(([key, s]) => [

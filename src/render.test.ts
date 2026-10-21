@@ -85,3 +85,19 @@ describe("renderScreenshots with emotional layers", () => {
     await expect(loadConfig(join(root, "goldie.config.ts"))).rejects.toThrow(/theme.emphasis/);
   });
 });
+
+describe("studio art settings", () => {
+  test("create an art block when the config has none", async () => {
+    const { applyDesign } = await import("./config.ts");
+    const root = fixture();
+    const cfg = await loadConfig(join(root, "goldie.config.ts"));
+    expect(cfg.art).toBeUndefined();
+    applyDesign(cfg, { art: { provider: "openai", model: "gpt-image-1.5", style: "clay-3d" } });
+    expect(cfg.art).toEqual({
+      provider: "openai",
+      style: "clay-3d",
+      assets: [],
+      model: "gpt-image-1.5",
+    });
+  });
+});

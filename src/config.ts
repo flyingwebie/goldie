@@ -745,10 +745,12 @@ export function applyDesign(cfg: LoadedConfig, design: DesignOverrides): void {
   if (design.sceneTransforms) {
     cfg.sceneTransforms = { ...cfg.sceneTransforms, ...design.sceneTransforms };
   }
-  if (design.art && cfg.art) {
+  if (design.art) {
     const { provider, model, draftModel, style } = design.art;
+    // Choices made in the studio's Settings work before the config has an
+    // art block: they become one with no assets yet, which the agent fills.
     cfg.art = {
-      ...cfg.art,
+      ...(cfg.art ?? { provider: provider ?? "fal", style: style ?? "", assets: [] }),
       ...(provider ? { provider } : {}),
       ...(model ? { model } : {}),
       ...(draftModel ? { draftModel } : {}),

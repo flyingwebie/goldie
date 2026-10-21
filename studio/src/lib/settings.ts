@@ -23,15 +23,16 @@ export type ArtModel = {
 
 export type StyleSummary = { label: string; description: string; bestFor: string[] };
 
-export type ArtSettings =
-  | {
-      configured: true;
-      provider: "openai" | "fal";
-      model: string | null;
-      draftModel: string | null;
-      style: string;
-    }
-  | { configured: false };
+export type ArtSettings = {
+  /** Whether an art block exists (in the config, or created from these settings). */
+  configured: boolean;
+  /** Whether it lists any art assets to generate yet. */
+  hasAssets: boolean;
+  provider: "openai" | "fal";
+  model: string | null;
+  draftModel: string | null;
+  style: string;
+};
 
 export type Settings = {
   keys: { openai: KeyStatus; fal: KeyStatus };

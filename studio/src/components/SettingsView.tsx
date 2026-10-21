@@ -46,7 +46,7 @@ export function SettingsView() {
   const refresh = () =>
     loadSettings().then((s) => {
       setSettings(s);
-      if (s?.art.configured) {
+      if (s) {
         setArt({
           provider: s.art.provider,
           model: s.art.model ?? "",
@@ -169,16 +169,13 @@ export function SettingsView() {
 
       <section className="flex flex-col gap-3 rounded-xl border border-border p-4">
         <h2 className="text-sm font-semibold">Model &amp; style</h2>
-        {!settings.art.configured ? (
+        {!settings.art.hasAssets ? (
           <p className="text-[12px] text-muted-foreground">
-            Add an <code className="font-mono">art</code> block to goldie.config.ts to turn on AI
-            art; these settings apply to it once it exists.
+            No art assets to generate yet. Pick a provider, models and style here; when you ask your
+            agent for AI art, it adds the assets and uses these choices.
           </p>
         ) : null}
-        <fieldset
-          disabled={!settings.art.configured}
-          className="flex flex-col gap-3 disabled:pointer-events-none disabled:opacity-50"
-        >
+        <fieldset className="flex flex-col gap-3">
           <Field label="Provider">
             <Select
               value={art.provider}
