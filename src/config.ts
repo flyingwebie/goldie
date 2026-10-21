@@ -289,8 +289,8 @@ export type ArtAsset = {
  * Store preview it is marketing, so anything goes.
  */
 export type PromoConfig = {
-  /** Output aspect ratios. Default ["9:16"]. */
-  formats?: Array<"9:16" | "4:5" | "1:1">;
+  /** Output aspect ratios. Default ["9:16"]. "16:9" lays the copy left and the tile's phone right. */
+  formats?: Array<"9:16" | "4:5" | "1:1" | "16:9">;
   /** Screenshot scene ids in play order. Default: every screenshot scene. */
   scenes?: string[];
   /** Seconds each scene holds, including its entrance. Default 3. */

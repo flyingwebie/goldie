@@ -44,7 +44,7 @@ goldie - App Store screenshots and previews, driven by argent
 Emotional screenshots
   goldie art        Generate the config's AI art layers (cached; --only <ids>, --force, --draft, --dry-run, --yes)
   goldie concepts   Draft the art in several styles and render comparison boards (--styles a,b,c)
-  goldie promo      Render the social promo video with HyperFrames (--format 9:16,4:5,1:1; default the config's; --render-only to skip regenerating the composition)
+  goldie promo      Render the social promo video with HyperFrames (--format 9:16,4:5,1:1,16:9; default the config's; --render-only to skip regenerating the composition)
   goldie discover   Scan the app for screens into goldie/discovery.json (--root <dir> to run without a config; --fresh to discard agent-written features)
   goldie version    Print the installed goldie version (-v, --version)
 

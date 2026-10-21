@@ -7,7 +7,7 @@ goldie makes two different videos. Keep them apart:
 | For | the App Store product page | TikTok, Reels, Shorts, X, ads, the Play Store promo link (YouTube), the website |
 | Content | real screen recordings of the app, joined | the designed tiles animated: headlines, devices, art, callouts, outro |
 | Rules | Apple: footage of the app itself, 15-30 s; captions allowed | none; aim for 12-25 s |
-| Size | 886x1920 (iPhone), 1200x1600 (iPad) | 1080x1920 (9:16), 1080x1350 (4:5), 1080x1080 (1:1) |
+| Size | 886x1920 (iPhone), 1200x1600 (iPad) | 1080x1920 (9:16), 1080x1350 (4:5), 1080x1080 (1:1), 1920x1080 (16:9) |
 
 ## Preview captions
 
@@ -48,7 +48,7 @@ one pass, music and all. The config is unchanged; only the engine is new.
 
 ```ts
 promo: {
-  formats: ["9:16", "4:5"],           // default ["9:16"]
+  formats: ["9:16", "4:5", "16:9"],   // default ["9:16"]; 16:9 for YouTube, websites, decks
   scenes: ["home", "report", "species", "offline"],   // default: every screenshot scene
   secondsPerScene: 2.8,               // default 3
   intro: "art/fox-rescuer.mp4",       // optional full-screen clip played first (an animated art asset)
@@ -81,6 +81,13 @@ doctor` checks both when the config has a `promo` block, and reports the fix
   through fal (cached in the art dir, so it is made once); with neither the
   video is silent. Music fades in and out with the video. Ask the user before
   using a track whose rights are unclear.
+- **16:9 (landscape)**: the portrait tile is split like a slide: the copy is
+  recomposed in the left column at slide size, and the tile's phone with its
+  mascots, callouts and bubbles is fitted into the right column (a phone that
+  bleeds off the tile's bottom or right edge bleeds off the frame's too). The
+  background art spans the frame and the scrim darkens from the left, behind
+  the copy. Check one frame per scene: a tile whose layers sit far from its
+  phone can leave the middle of the frame empty.
 - **Pacing**: 2.5-3 s per scene reads well; 4-6 scenes plus the outro lands
   at 15-20 s. Lead with the hook tile, end on proof, then the outro.
 - **Type**: the promo sets copy larger than the store tiles (a phone screen,

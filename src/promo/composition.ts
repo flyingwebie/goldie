@@ -24,6 +24,12 @@ import { type SceneLayer, sceneLayers } from "../draw.ts";
 import type { PreparedScene } from "../scene.ts";
 import type { Tween } from "./choreography.ts";
 import * as choreo from "./choreography.ts";
+import {
+  fitStage,
+  isLandscape,
+  landscapeBackgroundInput,
+  landscapeCopyInput,
+} from "./landscape.ts";
 import { type OutroContent, outroLayers } from "./outro.ts";
 import { buildTimeline, EASE_SOURCE, PROMO, slots, type Timeline } from "./timeline.ts";
 
@@ -144,6 +150,9 @@ async function writeSceneLayers(
   enterAt: number,
   layersDir: string,
 ): Promise<{ html: string; sceneTweens: Tween[] }> {
+  if (isLandscape(frameSize)) {
+    return writeLandscapeSceneLayers(scene, index, frameSize, enterAt, layersDir);
+  }
   const s = scene.input;
   const c = s.c;
   const sceneDir = join(layersDir, `scene-${index}`);
@@ -195,6 +204,97 @@ async function writeSceneLayers(
   }
   const html = `<div id="${panId}" style="position:absolute;left:0;top:0;width:${px(c.width)};height:${px(c.height)};">${divs.join("")}</div>`;
   return { html, sceneTweens: tweens };
+}
+
+/**
+ * A landscape scene: the frame-wide background, the copy recomposed for the
+ * left column, and the tile's stage (devices and decorations) fitted into
+ * the right column inside one scaled container, so every layer keeps its
+ * place relative to the phone. See landscape.ts.
+ */
+async function writeLandscapeSceneLayers(
+  scene: PreparedScene,
+  index: number,
+  frame: { width: number; height: number },
+  enterAt: number,
+  layersDir: string,
+): Promise<{ html: string; sceneTweens: Tween[] }> {
+  const s = scene.input;
+  const stage = { width: s.c.width, height: s.c.height };
+  const sceneDir = join(layersDir, `scene-${index}`);
+  await mkdir(sceneDir, { recursive: true });
+  const frameMeasure = createCanvas(frame.width, frame.height).getContext("2d");
+  const stageMeasure = createCanvas(stage.width, stage.height).getContext("2d");
+  const divs: string[] = [];
+  const tweens: Tween[] = [];
+
+  const writeLayers = async (
+    layers: SceneLayer[],
+    size: { width: number; height: number },
+    rise: number,
+    decorations: Decoration[],
+  ) => {
+    const out: string[] = [];
+    for (const layer of layers) {
+      const canvas = createCanvas(size.width, size.height);
+      layer.draw(canvas.getContext("2d"));
+      const file = `${layer.id}.png`;
+      await writeFile(join(sceneDir, file), canvas.toBuffer("image/png"));
+      const elId = `l${index}-${layer.id}`;
+      const cx = layer.box.left + layer.box.width / 2;
+      const cy = layer.box.top + layer.box.height / 2;
+      const isBackground = layer.meta.kind === "background";
+      const isMarks = layer.meta.kind === "marks";
+      const style =
+        `position:absolute;left:0;top:0;width:${px(size.width)};height:${px(size.height)};` +
+        `transform-origin:${px(cx)} ${px(cy)};opacity:${isBackground ? 1 : 0};` +
+        (isMarks ? "clip-path:inset(0% 100% 0% 0%);" : "");
+      out.push(`<img id="${esc(elId)}" style="${style}" src="layers/scene-${index}/${file}">`);
+      tweens.push(...tweensForLayer(layer, `#${elId}`, rise, enterAt, decorations));
+    }
+    return out;
+  };
+
+  const bgCss = isTransparentCss(s.background) ? "" : `background:${esc(s.background)};`;
+  divs.push(
+    `<div style="position:absolute;left:0;top:0;width:${px(frame.width)};height:${px(frame.height)};${bgCss}"></div>`,
+  );
+  const bg = sceneLayers(frameMeasure, landscapeBackgroundInput(s, frame)).filter(
+    (l) => l.meta.kind === "background",
+  );
+  divs.push(...(await writeLayers(bg, frame, frame.height, [])));
+  if (bg.length > 0 && s.theme.scrim) {
+    // The copy sits in the left column here, so the scrim darkens from the
+    // left edge across the copy instead of down from the top.
+    const scrim = s.theme.scrim;
+    divs.push(
+      `<div style="position:absolute;left:0;top:0;width:${px(frame.width * 0.62)};height:${px(frame.height)};` +
+        `background:linear-gradient(to right, ${esc(scrim.color)} 0%, ${esc(scrim.color)} 35%, rgba(0,0,0,0) 100%);"></div>`,
+    );
+  }
+
+  const copyInput = landscapeCopyInput(frameMeasure, s, frame);
+  const copyLayers = sceneLayers(frameMeasure, copyInput).filter(
+    (l) => l.meta.kind === "copy-line" || l.meta.kind === "marks",
+  );
+  divs.push(...(await writeLayers(copyLayers, frame, frame.height, [])));
+
+  const stageLayers = sceneLayers(stageMeasure, s).filter(
+    (l) => l.meta.kind === "device" || l.meta.kind === "decoration",
+  );
+  const fit = fitStage(
+    stageLayers.map((l) => l.box),
+    stage,
+    frame,
+  );
+  const stageDivs = await writeLayers(stageLayers, stage, stage.height, s.decorations);
+  divs.push(
+    `<div style="position:absolute;left:0;top:0;width:${px(stage.width)};height:${px(stage.height)};` +
+      `transform-origin:0 0;transform:translate(${px(fit.x)}, ${px(fit.y)}) scale(${fit.scale.toFixed(4)});">` +
+      `${stageDivs.join("")}</div>`,
+  );
+
+  return { html: divs.join(""), sceneTweens: tweens };
 }
 
 function tweensForLayer(

@@ -184,7 +184,7 @@ real, pixel-true capture:
   budget. `goldie concepts --styles a,b,c` renders draft boards so you can pick
   a direction first.
 - **Promo video** (`goldie promo`): the designed tiles animated for TikTok,
-  Reels, X or YouTube in 9:16, 4:5 or 1:1, with kinetic headlines, springing
+  Reels, X or YouTube in 9:16, 4:5, 1:1 or 16:9, with kinetic headlines, springing
   devices, popping callouts, an outro card, an optional AI-animated intro clip
   and a music bed (your file, or generated). Rendered by
   [HyperFrames](https://github.com/heygen-com/hyperframes) (Apache-2.0,

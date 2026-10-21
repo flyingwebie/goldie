@@ -27,6 +27,9 @@ export function outroLayers(
   size: { width: number; height: number },
 ): OutroLayer[] {
   const { width, height } = size;
+  // Sizes follow a portrait-ish reference, so a wide (16:9) card keeps the
+  // proportions of a phone one instead of a giant icon and headline.
+  const ref = Math.min(width, height * 0.75);
   const out: OutroLayer[] = [];
   const family = withGlyphFallback(theme.fontFamily);
   const accent = theme.accentColor ?? theme.headlineColor;
@@ -34,7 +37,7 @@ export function outroLayers(
   let y = height * 0.3;
 
   if (outro.icon) {
-    const iconSize = width * 0.26;
+    const iconSize = ref * 0.26;
     const box: Box = { left: width / 2 - iconSize / 2, top: y, width: iconSize, height: iconSize };
     const icon = outro.icon;
     out.push({
@@ -43,8 +46,8 @@ export function outroLayers(
       draw: (ctx) => {
         ctx.save();
         ctx.shadowColor = "rgba(15, 23, 42, 0.25)";
-        ctx.shadowBlur = width * 0.04;
-        ctx.shadowOffsetY = width * 0.015;
+        ctx.shadowBlur = ref * 0.04;
+        ctx.shadowOffsetY = ref * 0.015;
         ctx.beginPath();
         ctx.roundRect(box.left, box.top, box.width, box.height, box.width * 0.225);
         ctx.fillStyle = "#fff";
@@ -60,13 +63,17 @@ export function outroLayers(
     y += iconSize + height * 0.05;
   }
 
-  const headlineSize = width * TYPE.headlineSize * 1.25 * (theme.headline?.scale ?? 1);
+  const headlineSize = ref * TYPE.headlineSize * 1.25 * (theme.headline?.scale ?? 1);
   const weight = theme.headline?.weight ?? TYPE.headlineWeight;
   const font = `${weight} ${headlineSize}px ${family}`;
   measure.font = font;
   measure.letterSpacing = "0px";
   const text = theme.headline?.uppercase ? outro.headline.toLocaleUpperCase() : outro.headline;
-  const lines = wrapRuns(parseEmphasis(text), width * 0.82, (t) => measure.measureText(t).width);
+  const lines = wrapRuns(
+    parseEmphasis(text),
+    Math.min(width * 0.82, ref * 1.4),
+    (t) => measure.measureText(t).width,
+  );
   const lineHeight = headlineSize * TYPE.headlineLineHeight;
   for (const [i, line] of lines.entries()) {
     measure.font = font;
@@ -93,7 +100,7 @@ export function outroLayers(
 
   if (outro.cta) {
     y += height * 0.04;
-    const ctaSize = width * 0.045;
+    const ctaSize = ref * 0.045;
     const ctaFont = `700 ${ctaSize}px ${family}`;
     measure.font = ctaFont;
     const w = measure.measureText(outro.cta).width + ctaSize * 2.4;

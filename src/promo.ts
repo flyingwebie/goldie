@@ -29,6 +29,7 @@ import { loadImage } from "@napi-rs/canvas";
 import type { LoadedConfig, PromoConfig } from "./config.ts";
 import { registerFonts } from "./fonts.ts";
 import { probeDuration, writeComposition } from "./promo/composition.ts";
+import { isLandscape, landscapeStageTile } from "./promo/landscape.ts";
 import { renderComposition } from "./promo/render.ts";
 import { type PreparedScene, prepareScenes } from "./scene.ts";
 import type { DeviceKey } from "./specs.ts";
@@ -89,8 +90,10 @@ export async function renderPromo(
       );
     }
   } else {
+    // Landscape composes each tile at a portrait stage size and recomposes
+    // its copy for the frame (promo/landscape.ts); the rest compose at the frame.
     const all = await prepareScenes(cfg, deviceKey, locale, {
-      tile: size,
+      tile: isLandscape(size) ? landscapeStageTile(size) : size,
       copyScale: PROMO.copyScale,
     });
     const order = promo.scenes ?? all.map((s) => s.scene.id);
