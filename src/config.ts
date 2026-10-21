@@ -556,9 +556,16 @@ export function validateDesignLayers(cfg: LoadedConfig): void {
       `Unknown theme.emphasis "${t.emphasis}". Available: ${EMPHASIS_STYLES.join(", ")}`,
     );
   }
+  // Images `goldie art` will produce are allowed to be missing at load time,
+  // so `goldie art` / `goldie concepts` can run before the first generation;
+  // a render that needs one still fails with the same hint.
+  const artDir = resolve(cfg.root, cfg.art?.dir ?? "art");
+  const pendingArt = new Set((cfg.art?.assets ?? []).map((a) => resolve(artDir, `${a.id}.png`)));
   const exists = (where: string, src: string | undefined) => {
     if (!src || src === "none") return;
-    if (!existsSync(resolve(cfg.root, src))) {
+    const file = resolve(cfg.root, src);
+    if (pendingArt.has(file)) return;
+    if (!existsSync(file)) {
       throw new Error(
         `${where}: no image at ${resolve(cfg.root, src)}. Generated art? Run: goldie art`,
       );

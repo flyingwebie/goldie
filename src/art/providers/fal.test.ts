@@ -214,3 +214,18 @@ describe("falProvider.generate", () => {
     );
   });
 });
+
+describe("variantFor", () => {
+  test("maps a picked model to the endpoint the asset needs", async () => {
+    const { variantFor } = await import("./fal.ts");
+    expect(variantFor("fal-ai/nano-banana-pro/edit", false)).toBe("fal-ai/nano-banana-pro");
+    expect(variantFor("fal-ai/nano-banana-pro", true)).toBe("fal-ai/nano-banana-pro/edit");
+    expect(variantFor("fal-ai/bytedance/seedream/v4/text-to-image", true)).toBe(
+      "fal-ai/bytedance/seedream/v4/edit",
+    );
+    expect(variantFor("fal-ai/bytedance/seedream/v4/edit", false)).toBe(
+      "fal-ai/bytedance/seedream/v4/text-to-image",
+    );
+    expect(variantFor("fal-ai/recraft-v3", true)).toBe("fal-ai/recraft-v3");
+  });
+});

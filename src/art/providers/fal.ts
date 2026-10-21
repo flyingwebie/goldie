@@ -145,6 +145,29 @@ function familyFor(req: ImageRequest): FalFamily {
   return explicit ?? (req.quality === "final" ? "nano-banana" : "seedream");
 }
 
+/**
+ * A chosen model's text-to-image or edit endpoint, whichever the request
+ * needs: an edit endpoint requires reference images and a text-to-image one
+ * ignores them, so the picked model (from Settings) is mapped to the variant
+ * that matches whether this asset has references. Models with one endpoint
+ * pass through.
+ */
+export function variantFor(model: string, hasRefs: boolean): string {
+  const known = (id: string) => id in FAL_MODEL_FAMILY;
+  if (hasRefs) {
+    if (model.endsWith("/edit")) return model;
+    const swapped = model.replace(/\/text-to-image$/, "/edit");
+    if (swapped !== model && known(swapped)) return swapped;
+    if (known(`${model}/edit`)) return `${model}/edit`;
+    return model;
+  }
+  if (!model.endsWith("/edit")) return model;
+  const base = model.slice(0, -"/edit".length);
+  if (known(`${base}/text-to-image`)) return `${base}/text-to-image`;
+  if (known(base)) return base;
+  return model;
+}
+
 function defaultModelFor(family: FalFamily, hasRefs: boolean): string {
   switch (family) {
     case "nano-banana":
@@ -217,7 +240,7 @@ export function falProvider(apiKey: string): ImageProvider {
     async generate(req) {
       const hasRefs = req.references.length > 0;
       const family = familyFor(req);
-      const model = req.model ?? defaultModelFor(family, hasRefs);
+      const model = req.model ? variantFor(req.model, hasRefs) : defaultModelFor(family, hasRefs);
       const input = inputFor(family, req, hasRefs);
 
       const out = await falQueueSubmit(apiKey, model, input);

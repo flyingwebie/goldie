@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import {
   copyFile,
   lstat,
@@ -236,6 +237,9 @@ export async function writeManifest(cfg: LoadedConfig): Promise<string> {
   const webAsset = async (src: string | undefined): Promise<string | undefined> => {
     if (!src || src === "none") return src;
     const abs = resolve(cfg.root, src);
+    // Art `goldie art` has not generated yet: keep a url (the studio shows
+    // nothing there) rather than failing the whole manifest.
+    if (!existsSync(abs)) return `decor/pending-${basename(abs)}`;
     let url = copied.get(abs);
     if (!url) {
       url = `decor/${copied.size}-${basename(abs)}`;
