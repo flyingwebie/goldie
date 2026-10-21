@@ -76,6 +76,8 @@ type Plan = {
   req: ImageRequest;
   stale: boolean;
   cost: number;
+  providerName: "openai" | "fal";
+  imageProvider: ImageProvider;
 };
 
 type VideoPlan = {
@@ -114,11 +116,21 @@ export async function runArt(cfg: LoadedConfig, opts: RunArtOpts = {}): Promise<
 
   const quality: Quality = opts.draft ? "draft" : "final";
   const styleKey = opts.style ?? art.style;
-  // A dry run only prices and prints the plan, so it works before any key is set.
-  const apiKey = opts.dryRun
-    ? ((await tryResolveApiKey(cfg, art.provider)) ?? "")
-    : await resolveApiKey(cfg, art.provider);
-  const imageProvider = provider(art.provider, apiKey);
+  // One provider instance per name, keyed lazily: an asset may name its own
+  // provider (e.g. a 4K fal backdrop next to OpenAI characters). A dry run only
+  // prices and prints the plan, so it works before any key is set.
+  const providers = new Map<"openai" | "fal", ImageProvider>();
+  const providerFor = async (name: "openai" | "fal") => {
+    let p = providers.get(name);
+    if (!p) {
+      const apiKey = opts.dryRun
+        ? ((await tryResolveApiKey(cfg, name)) ?? "")
+        : await resolveApiKey(cfg, name);
+      p = provider(name, apiKey);
+      providers.set(name, p);
+    }
+    return p;
+  };
 
   const globalReferences = await loadReferenceFiles(cfg.root, art.references ?? []);
   const assets = opts.only ? art.assets.filter((a) => opts.only?.includes(a.id)) : art.assets;
@@ -136,14 +148,24 @@ export async function runArt(cfg: LoadedConfig, opts: RunArtOpts = {}): Promise<
     ];
     const prompt = buildPrompt(
       asset,
-      { ...art, style: styleKey },
+      { ...art, style: asset.style ?? styleKey },
       { storeName: cfg.store.name, storeCategory: cfg.store.category },
     );
-    const model = quality === "draft" ? (art.draftModel ?? undefined) : art.model;
+    const providerName = asset.provider ?? art.provider;
+    // An asset on another provider than the art block's takes its own model,
+    // or that provider's default; the art block's models are for its provider.
+    const model =
+      asset.model ??
+      (providerName !== art.provider
+        ? undefined
+        : quality === "draft"
+          ? (art.draftModel ?? undefined)
+          : art.model);
+    const imageProvider = await providerFor(providerName);
     const req: ImageRequest = { prompt, aspect, transparent, references, quality, model };
     const hash = computeHash({
       prompt,
-      provider: art.provider,
+      provider: providerName,
       model: model ?? "default",
       aspect,
       transparent,
@@ -153,7 +175,19 @@ export async function runArt(cfg: LoadedConfig, opts: RunArtOpts = {}): Promise<
     const file = join(artDir, `${asset.id}.png`);
     const stale = !(await isFresh(lock, asset.id, file, hash, force));
     const cost = stale ? imageProvider.estimateUsd(req) : 0;
-    plans.push({ asset, aspect, transparent, prompt, hash, file, req, stale, cost });
+    plans.push({
+      asset,
+      aspect,
+      transparent,
+      prompt,
+      hash,
+      file,
+      req,
+      stale,
+      cost,
+      providerName,
+      imageProvider,
+    });
   }
 
   const videoPlans: VideoPlan[] = [];
@@ -210,7 +244,7 @@ export async function runArt(cfg: LoadedConfig, opts: RunArtOpts = {}): Promise<
     // Keep the previous render reachable even once a changed prompt or
     // --force overwrites it.
     await snapshotArtFile(artDir, p.asset.id, p.file);
-    let bytes = await imageProvider.generate(p.req);
+    let bytes = await p.imageProvider.generate(p.req);
     await writeFile(p.file, bytes);
 
     if (p.transparent) {
@@ -221,7 +255,7 @@ export async function runArt(cfg: LoadedConfig, opts: RunArtOpts = {}): Promise<
 
     lock[p.asset.id] = {
       hash: p.hash,
-      provider: art.provider,
+      provider: p.providerName,
       model: p.req.model ?? "default",
       quality,
       prompt: p.prompt,

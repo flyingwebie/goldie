@@ -276,6 +276,19 @@ export type ArtAsset = {
   /** More reference images for this asset only, relative to the config. */
   references?: string[];
   /**
+   * This asset's own style, a preset key or free text, over `art.style` (and
+   * over a concept run's style): e.g. a photo-real backdrop behind flat
+   * mascots, the way a real photo frames illustrated characters.
+   */
+  style?: string;
+  /**
+   * This asset's own provider and model, over the art block's: e.g. a strip
+   * backdrop on fal's Nano Banana Pro at 4K while characters use OpenAI,
+   * whose images stop at 1536 px. Without `model`, the provider's default.
+   */
+  provider?: "openai" | "fal";
+  model?: string;
+  /**
    * Turn the still into a short video clip (fal image-to-video) for the promo
    * video: `art/<id>.mp4`.
    */
@@ -360,7 +373,7 @@ export type Theme = {
   /**
    * One wide image laid across the whole strip, each tile showing its slice,
    * so the store page reads as one continuous world. Drawn over the
-   * background and any backgroundImage.
+   * background; a tile with its own backgroundImage shows that instead.
    */
   backdrop?: string;
   /**
