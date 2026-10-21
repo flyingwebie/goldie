@@ -1,6 +1,7 @@
 import { mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { type Canvas, createCanvas } from "@napi-rs/canvas";
+import { captionFilter, writeCaptionPng } from "./captions.ts";
 import { isPreview, type LoadedConfig } from "./config.ts";
 import { drawScene, isTransparent } from "./draw.ts";
 import { execOrThrow } from "./exec.ts";
@@ -92,11 +93,13 @@ async function writePng(
 }
 
 /**
- * Joins the raw segment clips into one plain screen recording at the spec's
- * preview size. App Store previews must be the device screen and nothing
- * else, so no bezel, background or captions are added; only an audio track,
- * which Apple requires even when it is silent. The android video follows the
- * same shape, destined for the YouTube promo link the user posts themselves.
+ * Joins the raw segment clips into one screen recording at the spec's
+ * preview size. App Store previews must show footage of the app itself, so no
+ * bezel or background is added. Segment captions are the exception Guideline
+ * 2.3.4 allows (text overlays explaining the footage); they fade in over their
+ * segment. An audio track is always written, since Apple requires one even
+ * when it is silent. The android video follows the same shape, destined for
+ * the YouTube promo link the user posts themselves.
  */
 export async function renderPreview(cfg: LoadedConfig, deviceKey: DeviceKey, locale: string) {
   const spec = DEVICES[deviceKey];
@@ -136,10 +139,52 @@ export async function renderPreview(cfg: LoadedConfig, deviceKey: DeviceKey, loc
 
   const { width, height } = spec.preview;
   const audio = scene.audio
-    ? ["-i", resolve(cfg.root, scene.audio), "-filter:a", "volume=0.35"]
+    ? ["-i", resolve(cfg.root, scene.audio)]
     : ["-f", "lavfi", "-i", `anullsrc=r=${PREVIEW.audioSampleRate}:cl=stereo`];
+  const bedVolume = scene.audio ? "volume=0.35" : "anull";
 
-  console.log(`  render preview (${seconds.toFixed(1)}s)`);
+  // Cover the upload size and crop the sliver the aspect ratios disagree on.
+  const fit = `scale=${width}:${height}:force_original_aspect_ratio=increase:flags=lanczos,crop=${width}:${height},fps=${PREVIEW.fps}`;
+
+  // Captions: one looped PNG input each, timed to its segment.
+  const captionInputs: string[] = [];
+  const spans: Array<{ input: number; start: number; end: number }> = [];
+  let at = 0;
+  for (const [i, segment] of scene.segments.entries()) {
+    const duration = clips[i]!.durationSeconds;
+    if (segment.caption) {
+      const png = join(outDir, `.caption-${i}.png`);
+      const text = pick(segment.caption, locale, `${scene.id}/${segment.id}`, "caption");
+      await writeCaptionPng(
+        png,
+        text,
+        { width, height },
+        cfg.theme,
+        scene.captionPosition ?? "bottom",
+      );
+      spans.push({ input: 2 + captionInputs.length / 6, start: at, end: at + duration });
+      captionInputs.push("-loop", "1", "-t", seconds.toFixed(3), "-i", png);
+    }
+    at += duration;
+  }
+  const video =
+    spans.length === 0
+      ? ["-map", "0:v:0", "-vf", `${fit},format=yuv420p`, "-map", "1:a:0", "-filter:a", bedVolume]
+      : (() => {
+          const { graph, out } = captionFilter("base", spans);
+          return [
+            "-filter_complex",
+            `[0:v]${fit}[base];${graph};[${out}]format=yuv420p[vout];[1:a]${bedVolume}[aout]`,
+            "-map",
+            "[vout]",
+            "-map",
+            "[aout]",
+          ];
+        })();
+
+  console.log(
+    `  render preview (${seconds.toFixed(1)}s${spans.length ? `, ${spans.length} captions` : ""})`,
+  );
   await execOrThrow("ffmpeg", [
     "-y",
     "-loglevel",
@@ -151,13 +196,8 @@ export async function renderPreview(cfg: LoadedConfig, deviceKey: DeviceKey, loc
     "-i",
     list,
     ...audio,
-    "-map",
-    "0:v:0",
-    "-map",
-    "1:a:0",
-    // Cover the upload size and crop the sliver the aspect ratios disagree on.
-    "-vf",
-    `scale=${width}:${height}:force_original_aspect_ratio=increase:flags=lanczos,crop=${width}:${height},fps=${PREVIEW.fps},format=yuv420p`,
+    ...captionInputs,
+    ...video,
     "-c:v",
     "libx264",
     "-profile:v",
@@ -171,11 +211,18 @@ export async function renderPreview(cfg: LoadedConfig, deviceKey: DeviceKey, loc
     "-ar",
     String(PREVIEW.audioSampleRate),
     "-shortest",
+    // -shortest is unreliable once a filter graph sits between the inputs and
+    // the output (the silent bed is endless), so the length is also capped.
+    "-t",
+    seconds.toFixed(3),
     "-movflags",
     "+faststart",
     final,
   ]);
   await rm(list, { force: true });
+  for (const name of await readdir(outDir)) {
+    if (name.startsWith(".caption-")) await rm(join(outDir, name), { force: true });
+  }
 
   return final;
 }

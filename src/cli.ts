@@ -2,7 +2,10 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { runConcepts } from "./art/concepts.ts";
+import { ART_STYLE_KEYS, ensureMusic, runArt } from "./art/index.ts";
 import { capture, captureLocales } from "./capture.ts";
+import { renderConceptBoards } from "./concepts.ts";
 import {
   applyDesign,
   FRAME_VARIANTS,
@@ -19,6 +22,7 @@ import { doctor } from "./doctor.ts";
 import { FONT_KEYS, fontStack } from "./fonts.ts";
 import { LAYOUT_KEYS, type LayoutKey, TEMPLATE_KEYS } from "./layouts.ts";
 import { writeManifest } from "./manifest.ts";
+import { type PromoFormat, renderPromo } from "./promo.ts";
 import { renderPreview, renderScreenshots, verify } from "./render.ts";
 import { FlowFailure, repairBrief } from "./repair.ts";
 import { DEVICE_KEYS, type DeviceKey, isDeviceKey } from "./specs.ts";
@@ -35,6 +39,11 @@ goldie - App Store screenshots and previews, driven by argent
   goldie manifest   Write out/store.json for the studio app
   goldie studio     Serve the studio at http://localhost:4321 (--port <n>, --no-open)
   goldie all        capture -> frame -> preview -> manifest -> verify
+
+Emotional screenshots
+  goldie art        Generate the config's AI art layers (cached; --only <ids>, --force, --draft, --dry-run, --yes)
+  goldie concepts   Draft the art in several styles and render comparison boards (--styles a,b,c)
+  goldie promo      Render the social promo video (--format 9:16,4:5,1:1; default the config's)
   goldie version    Print the installed goldie version (-v, --version)
 
 Options
@@ -48,6 +57,12 @@ Options
   --layout <key>      Override theme.layout for this run (${LAYOUT_KEYS.join(" | ")})
   --screen-only       Render bare screens with no bezel for this run
 `;
+
+const list = (v: string | undefined) =>
+  v
+    ?.split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
 
 async function main() {
   const argv = process.argv.slice(2);
@@ -135,6 +150,59 @@ async function main() {
       console.log(`studio  ${url}`);
       if (!argv.includes("--no-open")) await openInBrowser(url);
       return new Promise<number>(() => {}); // serve until killed
+    }
+
+    case "art": {
+      const results = await runArt(cfg, {
+        only: list(opt("only")),
+        force: argv.includes("--force"),
+        draft: argv.includes("--draft"),
+        dryRun: argv.includes("--dry-run"),
+        yes: argv.includes("--yes"),
+        log: (line) => console.log(line),
+      });
+      const spent = results.filter((r) => r.status === "generated");
+      const usd = spent.reduce((sum, r) => sum + r.estimatedUsd, 0);
+      console.log(
+        `\n${spent.length} generated (~$${usd.toFixed(2)}), ${results.filter((r) => r.status === "cached").length} cached`,
+      );
+      return 0;
+    }
+
+    case "concepts": {
+      const styles = list(opt("styles"));
+      if (!styles?.length) {
+        throw new Error(`Pass --styles <a,b,c>. Presets: ${ART_STYLE_KEYS.join(", ")}`);
+      }
+      const concepts = await runConcepts(cfg, styles, {
+        dryRun: argv.includes("--dry-run"),
+        yes: argv.includes("--yes"),
+        log: (line) => console.log(line),
+      });
+      if (argv.includes("--dry-run")) return 0;
+      const boards = await renderConceptBoards(cfg, devices[0]!, locales[0]!, concepts);
+      await writeManifest(cfg);
+      for (const b of boards) console.log(`board  ${b}`);
+      return 0;
+    }
+
+    case "promo": {
+      const formats = (list(opt("format")) ?? cfg.promo?.formats ?? ["9:16"]) as PromoFormat[];
+      const music = cfg.promo?.music;
+      for (const locale of locales) {
+        for (const format of formats) {
+          const file = await renderPromo(cfg, locale, format, {
+            device: only,
+            music:
+              music && !cfg.promo?.audio
+                ? (seconds) => ensureMusic(cfg, music.prompt, seconds, music.model)
+                : undefined,
+          });
+          console.log(`promo  ${file}`);
+        }
+      }
+      await writeManifest(cfg);
+      return 0;
     }
 
     case "all": {

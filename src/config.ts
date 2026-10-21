@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { validateArt } from "./art/validate.ts";
 import type { CustomFont } from "./fonts.ts";
 import { ANDROID_FRAME, FRAMES, type FrameGeometry } from "./frame.ts";
 import {
@@ -512,7 +513,64 @@ export async function loadConfig(path = defaultConfigPath()): Promise<LoadedConf
   // never load one from cfg.frame (drawn generic bezel or cfg.android.frame).
   for (const d of loaded.devices) if (DEVICES[d].platform !== "android") framePath(loaded, d);
   validateLayouts(loaded);
+  validateDesignLayers(loaded);
+  validateArt(loaded);
   return loaded;
+}
+
+const DECORATION_KINDS = ["badge", "image", "callout", "bubble", "rating"] as const;
+
+/**
+ * Fails at load time on a misspelt emphasis style or decoration, a callout
+ * region outside its capture, or an art path that does not exist, rather than
+ * as a blank layer in the export.
+ */
+export function validateDesignLayers(cfg: LoadedConfig): void {
+  const t = cfg.theme;
+  if (t.emphasis && !(EMPHASIS_STYLES as readonly string[]).includes(t.emphasis)) {
+    throw new Error(
+      `Unknown theme.emphasis "${t.emphasis}". Available: ${EMPHASIS_STYLES.join(", ")}`,
+    );
+  }
+  const exists = (where: string, src: string | undefined) => {
+    if (!src || src === "none") return;
+    if (!existsSync(resolve(cfg.root, src))) {
+      throw new Error(
+        `${where}: no image at ${resolve(cfg.root, src)}. Generated art? Run: goldie art`,
+      );
+    }
+  };
+  exists("theme.backgroundImage", t.backgroundImage);
+  exists("theme.backdrop", t.backdrop);
+  const check = (where: string, list: Decoration[] | undefined) => {
+    for (const [i, d] of (list ?? []).entries()) {
+      const at = `${where}[${i}]`;
+      if (!(DECORATION_KINDS as readonly string[]).includes(d.kind)) {
+        throw new Error(
+          `${at}: unknown decoration kind "${(d as { kind: string }).kind}". Available: ${DECORATION_KINDS.join(", ")}`,
+        );
+      }
+      if (d.layer && d.layer !== "back" && d.layer !== "front") {
+        throw new Error(`${at}: layer must be "back" or "front".`);
+      }
+      if (d.kind === "image") exists(at, d.src);
+      if (d.kind === "callout") {
+        const { x, y, width, height } = d.from;
+        const inside = [x, y, width, height].every((v) => v >= 0 && v <= 1);
+        if (!inside || width <= 0 || height <= 0 || x + width > 1.0001 || y + height > 1.0001) {
+          throw new Error(
+            `${at}: callout "from" must be a region inside the capture, as fractions 0-1.`,
+          );
+        }
+      }
+    }
+  };
+  check("theme.decorations", t.decorations);
+  for (const scene of cfg.scenes) {
+    if (!isScreenshot(scene)) continue;
+    check(`scene "${scene.id}" decorations`, scene.decorations);
+    exists(`scene "${scene.id}" backgroundImage`, scene.backgroundImage);
+  }
 }
 
 /**

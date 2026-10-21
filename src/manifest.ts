@@ -75,6 +75,10 @@ export type StoreManifest = {
   locales: string[];
   /** Keyed by device key, then locale. */
   assets: Record<string, Record<string, LocaleAssets>>;
+  /** Rendered social promo videos (`goldie promo`), under out/promo. */
+  promo: Array<{ format: string; locale: string; url: string; durationSeconds: number }>;
+  /** Art-direction concept boards (`goldie concepts`), under out/concepts; newest run only. */
+  concepts: Array<{ style: string; label: string; url: string }>;
   /** Everything the studio needs to composite scenes in the browser. */
   design: {
     theme: Theme;
@@ -158,6 +162,8 @@ export async function writeManifest(cfg: LoadedConfig): Promise<string> {
   await link(join(cfg.outDir, "screenshots"), join(webDir, "screenshots"));
   await link(join(cfg.outDir, "previews"), join(webDir, "previews"));
   await link(join(cfg.outDir, "raw"), join(webDir, "raw"));
+  await link(join(cfg.outDir, "promo"), join(webDir, "promo"));
+  await link(join(cfg.outDir, "concepts"), join(webDir, "concepts"));
 
   // Bezel art the browser composites with; every bundled variant so switching
   // frames never waits on a server.
@@ -300,6 +306,29 @@ export async function writeManifest(cfg: LoadedConfig): Promise<string> {
     if (first) captures[deviceKey] = { ...first, byLocale };
   }
 
+  // Promo videos: out/promo/<format>/<locale>/promo.mp4, format "9x16" etc.
+  const promo: StoreManifest["promo"] = [];
+  for (const format of (await ls(join(cfg.outDir, "promo"))).sort()) {
+    for (const locale of (await ls(join(cfg.outDir, "promo", format))).sort()) {
+      const file = join(cfg.outDir, "promo", format, locale, "promo.mp4");
+      if (!(await stat(file).catch(() => null))) continue;
+      const { durationSeconds } = await videoInfo(file);
+      promo.push({
+        format: format.replace("x", ":"),
+        locale,
+        url: `promo/${format}/${locale}/promo.mp4`,
+        durationSeconds,
+      });
+    }
+  }
+  // Concept boards: out/concepts/<style>/board.png.
+  const concepts: StoreManifest["concepts"] = [];
+  for (const style of (await ls(join(cfg.outDir, "concepts"))).sort()) {
+    const file = join(cfg.outDir, "concepts", style, "board.png");
+    if (!(await stat(file).catch(() => null))) continue;
+    concepts.push({ style, label: conceptLabel(style), url: `concepts/${style}/board.png` });
+  }
+
   const previewScene = cfg.scenes.find(isPreview);
   const manifest: StoreManifest = {
     generatedAt: new Date().toISOString(),
@@ -317,6 +346,8 @@ export async function writeManifest(cfg: LoadedConfig): Promise<string> {
     })),
     locales: cfg.locales,
     assets,
+    promo,
+    concepts,
     design: {
       theme,
       frames,
@@ -348,6 +379,11 @@ export async function writeManifest(cfg: LoadedConfig): Promise<string> {
   const file = join(webDir, "store.json");
   await writeFile(file, JSON.stringify(manifest, null, 2));
   return file;
+}
+
+/** "3d-inflated" -> "3d inflated", for a concept board's caption. */
+function conceptLabel(style: string): string {
+  return style.replace(/-/g, " ");
 }
 
 /** A font family as a safe file-name segment. */

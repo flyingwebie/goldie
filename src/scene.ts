@@ -32,6 +32,8 @@ export type PreparedScene = {
 export type PrepareOptions = {
   /** Compose at this size instead of the device's store tile (the promo's frame). */
   tile?: { width: number; height: number };
+  /** Overrides the device's copy scale (the promo sets larger type for small screens). */
+  copyScale?: number;
   /**
    * Maps an art path from the config to the file to load instead; concept
    * boards point the same config at draft art this way.
@@ -87,7 +89,11 @@ export async function prepareScenes(
   for (const { scene, layout, secondScene } of resolved) {
     const first = slot;
     slot += layout.span;
-    const c = compose(layout, tile, cfg.theme, { screenOnly, geom, copyScale: spec.copyScale });
+    const c = compose(layout, tile, cfg.theme, {
+      screenOnly,
+      geom,
+      copyScale: opts.copyScale ?? spec.copyScale,
+    });
     const decorations: Decoration[] = [
       ...(cfg.theme.decorations ?? []),
       ...(scene.decorations ?? []),
