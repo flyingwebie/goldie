@@ -7,24 +7,27 @@ description: >-
   local studio with the finished store page. Use this skill when the user
   asks for store screenshots, store assets, a preview video, or mentions
   goldie. Also use it to change assets goldie made before: new headlines, a
-  different background or bezel, or a new screenshot order. Run it from the
-  mobile app's repo.
+  different background or bezel, a new screenshot order, AI art and mascots,
+  a more emotional strip, or a social promo video. Run it from the mobile
+  app's repo.
 ---
 
 # goldie: App Store assets for the app in this repo
 
 goldie replays argent YAML flows on an iOS simulator, captures raw screenshots
 and recordings, and turns them into upload-ready assets: screenshots get a
-device bezel, a background, and marketing copy; the preview video is the raw
-recordings joined as-is, since Apple requires app previews to be a plain
-screen recording with no framing or captions. A React studio shows the
-result as the real store page. Your job is everything goldie cannot do alone:
-pick the screens worth marketing, author the flows that reach them, write the
-copy, and drive the pipeline.
+device bezel, a background, marketing copy, and emotional layers (art,
+mascots, callouts lifted out of the screen, speech bubbles, ratings); the
+preview video is the raw recordings joined, with optional captions (the only
+overlay Apple allows on previews). A promo video animates the designed tiles
+for social media. A React studio shows the result as the real store page.
+Your job is everything goldie cannot do alone: find the story that makes a
+visitor feel the app is for them, pick the screens that tell it, author the
+flows that reach them, write the copy, direct the art, and drive the pipeline.
 
-The end state: 4 or 5 framed screenshots and the raw clips for a preview video,
-visible in the studio at http://localhost:4321, with the video rendering in
-the background.
+The end state: 4 or 5 screenshots that tell one story and sell a feeling, not a
+feature list, plus the raw clips for a preview video, visible in the studio at
+http://localhost:4321, with the video rendering in the background.
 
 ## Before anything: check for an existing goldie setup
 
@@ -150,7 +153,20 @@ Choose:
 
 While exploring, note the exact visible text labels and accessibility ids you
 will need as selectors, and normalized coordinates for anything with no label
-(icon-only tab bars are the usual case).
+(icon-only tab bars are the usual case). Also look for brand art the store
+page can use: a mascot kit, illustrations, the app icon, onboarding images.
+
+## Step 2.5: Write the brief and shape the story
+
+Read `references/storytelling.md` before writing any copy. Write the five-line
+brief (who, pain, promise, feeling, proof) as a comment at the top of the
+config, pick the story arc, and assign each screenshot scene one beat of it:
+the first tile is the hook (a feeling or a pain, never a feature), the second
+proves it. Plan, per tile, the layout and the layer that breaks the frame (a
+callout cut from the screen, a mascot or object overlapping the device, a
+bubble, a bleed, a backdrop). The step is done when every scene has a beat, a
+2-5 word headline with one stressed word, and a frame-breaking idea, and the
+headlines read left to right as one story.
 
 ## Step 3: Author the config and flows
 
@@ -172,10 +188,19 @@ by name when one already reaches the screen. `flowsDir` in the config overrides
 the location; the default is `.argent/flows` under `appRoot`.
 
 Read `references/config.md` for the config schema, an annotated example, and
-copywriting guidance. Read `references/flows.md` for the flow YAML vocabulary
-and the conventions that keep flows replayable. Write the headlines and
-subheads yourself in the app's voice; they are the marketing layer, so make
-them benefit-led and short.
+the layer reference. Read `references/flows.md` for the flow YAML vocabulary
+and the conventions that keep flows replayable. The copy and layers come from
+the Step 2.5 plan.
+
+### Art direction
+
+Generated art (backgrounds, characters, 3D objects, stickers) lifts a strip
+from framed screens to a brand world. Read `references/art.md` when the user
+asks for art, illustrations, a mascot, 3D or a more striking look, or when an
+`OPENAI_API_KEY` / `FAL_KEY` is available: propose 2-3 directions as concept
+boards (`goldie concepts`), let the user pick, then generate final art (`goldie
+art`). Without a key, the playbook still works with brand art from the repo,
+callouts, bubbles, ratings and bold type.
 
 Everything renders relative to the config file: output lands in
 `<app-repo>/goldie/out/`. Add `goldie/out/` to the app's `.gitignore`, and
@@ -239,6 +264,13 @@ If `preview` refuses because the total is outside 15 to 30 seconds, adjust
 segment pacing (`wait:` steps and `holdSeconds`) and re-capture only what
 changed.
 
+Then check the strip against the playbook's checklist (storytelling.md,
+section 7) in the studio, and fix what fails before reporting.
+
+For the promo video (social media, ads, the Play promo link) and preview
+captions, read `references/promo.md`; render the promo with `goldie promo`
+once the tiles are final.
+
 Finish with `GOLDIE_CONFIG=... npx -y goldie@0 verify` and report the result: which
 assets exist, where they are, and whether they pass Apple's rules. The
 studio's sidebar shows the same checks; a red row is a rule violation. The
@@ -283,6 +315,12 @@ the next prompt can build on it.
 | Change the preview story or its pacing | preview `segments[]`, `holdSeconds`, flow `wait:` steps | `capture`, `preview`, `manifest` |
 | Another locale | `locales`, plus a `<locale>` key in every copy record | `capture`, `frame`, `preview`, `manifest` |
 | The app itself in each locale's language, not just the copy | `localizedCaptures: true` (iOS devices) | `capture`, `frame`, `preview`, `manifest` |
+| More emotional, less like a feature list | the Step 2.5 plan: hook headline, stressed words, kickers, frame-breaking layers (`references/storytelling.md`) | `frame`, `manifest` |
+| Point at one feature on a screen | a `callout` decoration cutting it from the capture | `frame`, `manifest` |
+| Illustrations, a mascot, 3D, a scene behind the phone | `art` assets (`references/art.md`), then `theme.backgroundImage` / `backdrop` / image decorations | `concepts` (to choose), `art`, `frame`, `manifest` |
+| A different art direction | `art.style`, then regenerate | `concepts`, `art --force`, `frame`, `manifest` |
+| Captions on the App Store preview | preview `segments[].caption` (`references/promo.md`) | `preview`, `manifest` |
+| A video for social media or ads | `promo` (`references/promo.md`) | `promo` |
 
 `capture` replays every flow; to re-capture only what changed, keep the
 other scenes as they are and accept the extra minute, or delete only the
