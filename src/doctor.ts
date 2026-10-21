@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import * as argent from "./argent.ts";
+import { tryResolveApiKey } from "./art/keys.ts";
 import { flowPath, type LoadedConfig } from "./config.ts";
 import * as device from "./device.ts";
 import { exec } from "./exec.ts";
@@ -191,6 +192,31 @@ export async function doctor(cfg: LoadedConfig): Promise<boolean> {
           fix: "Drop the launch: step and state the starting screen in executionPrerequisite",
         });
       }
+    }
+  }
+
+  // AI art keys: only when the config asks for art. The provider's key is
+  // required; fal is optional with OpenAI but unlocks cutouts, clips and music.
+  if (cfg.art) {
+    const where = `${resolve(cfg.root, ".env")} (see goldie/.env.example), or the environment`;
+    const needsFal =
+      cfg.art.provider === "fal" ||
+      cfg.art.assets.some((a) => a.animate) ||
+      Boolean(cfg.promo?.music && !cfg.promo.audio);
+    for (const provider of ["openai", "fal"] as const) {
+      const required = provider === cfg.art.provider || (provider === "fal" && needsFal);
+      const found = Boolean(await tryResolveApiKey(cfg, provider));
+      const name = provider === "openai" ? "OPENAI_API_KEY" : "FAL_KEY";
+      if (!required && !found) continue;
+      checks.push({
+        name: `${name}`,
+        ok: found,
+        detail: found
+          ? "found (value not shown)"
+          : `missing, needed for ${provider === "fal" && provider !== cfg.art.provider ? "cutouts, clips or music" : "goldie art"}`,
+        fix: `Add ${name}=<your key> to ${where}`,
+        warnOnly: !required,
+      });
     }
   }
 

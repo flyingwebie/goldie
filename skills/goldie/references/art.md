@@ -13,9 +13,19 @@ image decorations).
 (fal also powers background removal, animated clips and music, so a fal key
 is worth having either way). goldie reads them from the environment, then
 `goldie/.env` next to the config, then the app root's `.env.local` / `.env`.
-When a key is missing, tell the user which variable to add to `goldie/.env`
-and make sure `goldie/.env` is in the app's `.gitignore`. Run everything up to
-the paid call with `--dry-run` meanwhile; it needs no key.
+
+Set the user up in three moves, never asking them to paste a key into chat:
+
+1. Write `goldie/.env.example` with both variable names, empty, and a comment
+   saying where each key comes from (OpenAI: platform.openai.com/api-keys,
+   "Create new secret key"; fal: fal.ai/dashboard/keys, "Add key").
+2. Add `goldie/.env` (and `goldie/out/`) to the app's `.gitignore`.
+3. Tell the user: copy `goldie/.env.example` to `goldie/.env`, paste the
+   keys after the `=` signs, save, then say when done. Check with
+   `goldie doctor`, which reports each key as found or missing without
+   showing it.
+
+Run everything up to the paid call with `--dry-run` meanwhile; it needs no key.
 
 ## The workflow
 
