@@ -242,10 +242,14 @@ export async function writeManifest(cfg: LoadedConfig): Promise<string> {
     }
     return url;
   };
+  // Image decorations keep their config-relative src alongside the browser
+  // url, under `configSrc`: the editor needs it to save a moved or newly
+  // added image layer back to goldie.design.json in the same relative form
+  // the config itself uses, rather than the out/web url it renders with.
   const webDecorations = async (list: Decoration[] | undefined) =>
     Promise.all(
       (list ?? []).map(async (d) =>
-        d.kind === "image" ? { ...d, src: (await webAsset(d.src))! } : d,
+        d.kind === "image" ? { ...d, configSrc: d.src, src: (await webAsset(d.src))! } : d,
       ),
     );
   const scenes: StoreManifest["design"]["scenes"] = [];

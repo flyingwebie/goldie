@@ -20,6 +20,9 @@ export function useHistory<T>(initial: () => T) {
   const future = useRef<T[]>([]);
   const current = useRef<Entry<T>>(null as unknown as Entry<T>);
   if (current.current === null) current.current = { state, field: null, at: 0 };
+  // Bumped on every stack change, purely so a render re-reads past/future's
+  // length below; canUndo/canRedo themselves live on the refs, not in state.
+  const [, bump] = useState(0);
 
   const set = useCallback((field: string, update: T | ((prev: T) => T)) => {
     const prev = current.current;
@@ -31,6 +34,7 @@ export function useHistory<T>(initial: () => T) {
     future.current = [];
     current.current = { state: next, field, at: now };
     setState(next);
+    bump((n) => n + 1);
   }, []);
 
   const undo = useCallback(() => {
@@ -39,6 +43,7 @@ export function useHistory<T>(initial: () => T) {
     future.current.push(current.current.state);
     current.current = { state: entry.state, field: null, at: 0 };
     setState(entry.state);
+    bump((n) => n + 1);
   }, []);
 
   const redo = useCallback(() => {
@@ -47,6 +52,7 @@ export function useHistory<T>(initial: () => T) {
     past.current.push(current.current);
     current.current = { state: next, field: null, at: 0 };
     setState(next);
+    bump((n) => n + 1);
   }, []);
 
   useEffect(() => {
@@ -61,7 +67,14 @@ export function useHistory<T>(initial: () => T) {
     return () => window.removeEventListener("keydown", onKey);
   }, [undo, redo]);
 
-  return { state, set, undo, redo };
+  return {
+    state,
+    set,
+    undo,
+    redo,
+    canUndo: past.current.length > 0,
+    canRedo: future.current.length > 0,
+  };
 }
 
 function isTextTarget(target: EventTarget | null): boolean {

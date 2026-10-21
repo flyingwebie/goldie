@@ -1,10 +1,11 @@
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { AnimatePresence, Reorder } from "motion/react";
 import type React from "react";
-import { Fragment, type ReactNode, useEffect, useRef, useState } from "react";
+import { Fragment, forwardRef, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { FRAMES, type FrameGeometry } from "../../../src/frame";
 import {
+  applyTransform,
   BADGE,
   type Composition,
   compose,
@@ -13,6 +14,7 @@ import {
   type LayoutKey,
   resolveScenes,
   SCREEN_SHADOW,
+  type SceneTransform,
   TYPE,
 } from "../../../src/layouts";
 import {
@@ -27,6 +29,7 @@ import {
 } from "../../../src/marks";
 import { mapRuns, parseEmphasis, type Run } from "../../../src/richtext";
 import type {
+  ArtLibraryImage,
   Decoration,
   Design,
   DesignScene,
@@ -38,6 +41,16 @@ import type {
   Theme,
 } from "../manifest";
 import { CHECKERBOARD, layoutOptions, TRANSPARENT } from "./DesignPanel";
+import {
+  AddMenu,
+  canonicalDecorations,
+  defaultDecoration,
+  displayDecoration,
+  EditorOverlay,
+  EditorToolbar,
+  Inspector,
+  type Selection,
+} from "./Editor";
 import { Select } from "./Sidebar";
 import { Button } from "./ui/button";
 
@@ -111,6 +124,35 @@ export type StripView = "strip" | "grid";
  * numbers the files in the order shown. The preview tile stays first, as
  * the store shows it.
  */
+
+/**
+ * One screenshot scene's share of the element editor's state: everything the
+ * lightbox's toolbar, the inspector, and the in-scene EditorOverlay need to
+ * select, move and edit its copy block, devices and decorations. Built once
+ * per scene in Strip() and handed to every slice's ScreenshotScene and Entry.
+ */
+export type EditorEntryInfo = {
+  sceneId: string;
+  /** 2 for a panorama/panorama-duo scene; 1 otherwise. */
+  span: number;
+  selection: Selection | null;
+  onSelect: (sel: Selection | null) => void;
+  pickRegionIndex: number | null;
+  onPickRegion: (index: number | null) => void;
+  /** The scene's own decorations currently in effect (a live override, or the config's), canonical (config-relative) form. */
+  decorations: Decoration[];
+  /** The config's own decorations for this scene, untouched - what "Reset element" restores a surviving index to. */
+  baselineDecorations: Decoration[];
+  onDecorations: (list: Decoration[], fieldKey: string) => void;
+  transform: SceneTransform;
+  onTransform: (t: SceneTransform, fieldKey: string) => void;
+  /** The scene's pre-transform composition, for the device rotate values ElementTransform.rotate is relative to. */
+  baseComposition: Composition;
+  artLibrary: ArtLibraryImage[];
+  history: { canUndo: boolean; canRedo: boolean; undo: () => void; redo: () => void };
+  onResetScene: () => void;
+  onRevertAll: () => void;
+};
 export function Strip({
   design,
   captures,
@@ -130,6 +172,14 @@ export function Strip({
   sceneLayouts,
   onSceneLayout,
   view,
+  sceneDecorations,
+  onSceneDecorations,
+  sceneTransforms,
+  onSceneTransform,
+  artLibrary,
+  history,
+  onRevertScene,
+  onRevertAll,
 }: {
   design: Design;
   captures: DeviceCaptures;
@@ -157,9 +207,50 @@ export function Strip({
   sceneLayouts: Record<string, string>;
   onSceneLayout: (sceneId: string, key: string | undefined) => void;
   view: StripView;
+  /**
+   * The element editor's live decorations per screenshot scene id, config-
+   * relative `src`; a scene absent here still shows its config decorations,
+   * untouched. `fieldKey` names the edit for the undo stack (see useHistory).
+   */
+  sceneDecorations: Record<string, Decoration[]>;
+  onSceneDecorations: (sceneId: string, list: Decoration[], fieldKey: string) => void;
+  /** The editor's moves of each scene's copy block and devices, per screenshot scene id. */
+  sceneTransforms: Record<string, SceneTransform>;
+  onSceneTransform: (sceneId: string, t: SceneTransform, fieldKey: string) => void;
+  /** Every image the config references or keeps in its art dir, for the Add > Image picker. */
+  artLibrary: ArtLibraryImage[];
+  history: { canUndo: boolean; canRedo: boolean; undo: () => void; redo: () => void };
+  onRevertScene: (sceneId: string) => void;
+  onRevertAll: () => void;
 }) {
   const theme = design.theme;
   const frameGeometry = FRAMES[tileSpec.key as keyof typeof FRAMES] ?? FRAMES["iphone-6.9"];
+
+  // Every image decoration's config-relative path the last `goldie manifest`
+  // already copied into out/web/decor, keyed by that path: the editor's own
+  // added images (not covered yet) fall back to the art-library file route.
+  const knownImageUrls = useMemo(() => {
+    const map = new Map<string, string>();
+    const collect = (list: Decoration[] | undefined) => {
+      for (const d of list ?? []) {
+        if (d.kind === "image" && d.configSrc) map.set(d.configSrc, d.src);
+      }
+    };
+    collect(design.decorations);
+    for (const scene of design.scenes) collect(scene.decorations);
+    return map;
+  }, [design.decorations, design.scenes]);
+  const resolveArtUrl = (configSrc: string) =>
+    knownImageUrls.get(configSrc) ?? `/api/art-library/file?src=${encodeURIComponent(configSrc)}`;
+
+  // The current selection in the lightbox's element editor, and a callout
+  // mid-"pick region"; neither survives a scene change or closing the lightbox.
+  const [selection, setSelection] = useState<Selection | null>(null);
+  const [pickRegionIndex, setPickRegionIndex] = useState<number | null>(null);
+  const clearSelection = () => {
+    setSelection(null);
+    setPickRegionIndex(null);
+  };
   const scenes =
     order.length > 0
       ? [...design.scenes].sort((a, b) => rankOf(order, a.id) - rankOf(order, b.id))
@@ -260,6 +351,8 @@ export function Strip({
       defaultKey: string;
       onChange: (key: string | undefined) => void;
     };
+    /** The element editor's state for this scene (screenshots only); the lightbox's toolbar and inspector read it. */
+    editor?: EditorEntryInfo;
   };
   const entries: Entry[] = [];
   if (segments.length > 0 && tileSpec.preview) {
@@ -287,6 +380,41 @@ export function Strip({
       defaultKey: defaultLayoutOf(scene),
       onChange: (key: string | undefined) => onSceneLayout(scene.id, key),
     };
+    // The scene's own decorations as the editor sees them: a live override
+    // once it has touched this scene, else the config's (manifest baseline),
+    // in canonical (config-relative image src) form.
+    const sceneDecosCanonical =
+      sceneDecorations[scene.id] ?? canonicalDecorations(scene.decorations ?? []);
+    const sceneTransform = sceneTransforms[scene.id] ?? {};
+    const editorInfo: EditorEntryInfo = {
+      sceneId: scene.id,
+      span: spec.span,
+      selection,
+      onSelect: setSelection,
+      pickRegionIndex,
+      onPickRegion: setPickRegionIndex,
+      decorations: sceneDecosCanonical,
+      baselineDecorations: canonicalDecorations(scene.decorations ?? []),
+      onDecorations: (list, fieldKey) => onSceneDecorations(scene.id, list, fieldKey),
+      transform: sceneTransform,
+      onTransform: (t, fieldKey) => onSceneTransform(scene.id, t, fieldKey),
+      baseComposition: compose(spec, tileSpec.screenshot, theme, {
+        screenOnly,
+        geom: geom ?? frameGeometry,
+        copyScale: tileSpec.copyScale,
+      }),
+      artLibrary,
+      history,
+      onResetScene: () => {
+        onRevertScene(scene.id);
+        clearSelection();
+      },
+      onRevertAll: () => {
+        onRevertAll();
+        clearSelection();
+      },
+    };
+
     for (let slice = 0; slice < spec.span; slice++) {
       shotCount += 1;
       entries.push({
@@ -299,6 +427,7 @@ export function Strip({
         // Only the first slice drags; the second follows it.
         sceneId: slice === 0 ? scene.id : undefined,
         layout: layoutControl,
+        editor: editorInfo,
         scene: (editable) => (
           <ScreenshotScene
             spec={spec}
@@ -326,9 +455,13 @@ export function Strip({
             captureUrl={capture.url}
             secondCaptureUrl={second?.url}
             secondSceneId={secondScene}
-            decorations={[...design.decorations, ...(scene.decorations ?? [])]}
+            themeDecorations={design.decorations}
+            sceneDecorations={sceneDecosCanonical}
+            resolveArtUrl={resolveArtUrl}
+            sceneTransform={sceneTransform}
             locale={locale}
             onEdit={editable ? (field, text) => onCopy(scene.id, field, text) : undefined}
+            editor={editable ? editorInfo : undefined}
           />
         ),
       });
@@ -567,12 +700,17 @@ export function Strip({
         <Lightbox
           entry={entries[open]}
           layouts={design.layouts}
+          locale={locale}
           index={open}
           count={entries.length}
-          onClose={() => setOpen(null)}
+          onClose={() => {
+            clearSelection();
+            setOpen(null);
+          }}
           // Stepping swaps the scene in place with no morph.
           onStep={(delta) => {
             if (open === null) return;
+            clearSelection();
             const next = Math.min(entries.length - 1, Math.max(0, open + delta));
             setNamed(next);
             setOpenState(next);
@@ -592,6 +730,7 @@ export function Strip({
 function Lightbox({
   entry,
   layouts,
+  locale,
   index,
   count,
   onClose,
@@ -608,23 +747,38 @@ function Lightbox({
       defaultKey: string;
       onChange: (key: string | undefined) => void;
     };
+    editor?: EditorEntryInfo;
   };
   layouts: Design["layouts"];
+  locale: string;
   index: number;
   count: number;
   onClose: () => void;
   onStep: (delta: number) => void;
 }) {
+  const editor = entry.editor;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLElement && e.target.isContentEditable) return;
-      if (e.key === "Escape") onClose();
-      else if (e.key === "ArrowLeft") onStep(-1);
+      const selected = editor?.selection;
+      if (e.key === "Escape") {
+        if (selected) editor?.onSelect(null);
+        else onClose();
+        return;
+      }
+      // While something is selected, the arrow keys nudge it (EditorOverlay's
+      // own listener does that) instead of paging the lightbox.
+      if (
+        selected &&
+        ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Delete", "Backspace"].includes(e.key)
+      )
+        return;
+      if (e.key === "ArrowLeft") onStep(-1);
       else if (e.key === "ArrowRight") onStep(1);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, onStep]);
+  }, [onClose, onStep, editor]);
 
   return (
     <div
@@ -670,7 +824,47 @@ function Lightbox({
             />
           </div>
         ) : null}
+        {editor ? (
+          <>
+            <AddMenu
+              artLibrary={editor.artLibrary}
+              onAdd={(kind, image) => {
+                const next = [...editor.decorations, defaultDecoration(kind, locale, image?.src)];
+                editor.onDecorations(next, `add:${editor.sceneId}`);
+                editor.onSelect({ kind: "decoration", index: next.length - 1 });
+              }}
+            />
+            <EditorToolbar
+              canUndo={editor.history.canUndo}
+              canRedo={editor.history.canRedo}
+              onUndo={editor.history.undo}
+              onRedo={editor.history.redo}
+              onRevertScene={editor.onResetScene}
+              onRevertAll={editor.onRevertAll}
+            />
+          </>
+        ) : null}
       </div>
+
+      {editor?.selection ? (
+        <div className="absolute top-20 right-6 bottom-20">
+          <Inspector
+            selection={editor.selection}
+            onSelect={editor.onSelect}
+            decorations={editor.decorations}
+            onDecorations={editor.onDecorations}
+            transform={editor.transform}
+            onTransform={editor.onTransform}
+            baseComposition={editor.baseComposition}
+            locale={locale}
+            onReset={() => resetSelected(editor)}
+            onPickRegion={() => {
+              if (editor.selection?.kind === "decoration")
+                editor.onPickRegion(editor.selection.index);
+            }}
+          />
+        </div>
+      ) : null}
 
       <Button
         type="button"
@@ -751,24 +945,25 @@ const cq = (tile: { width: number; height: number }) => ({
   h: (v: number) => `${(v / tile.height) * 100}cqh`,
 });
 
-function Canvas({
-  background,
-  fontFamily,
-  children,
-}: {
-  background: string;
-  fontFamily: string;
-  children: ReactNode;
-}) {
+/**
+ * Forwards its ref to the size-container div: the element editor measures
+ * everything it tags with `data-edit` relative to this box, so it needs a
+ * handle on the box itself, not just its children.
+ */
+const Canvas = forwardRef<
+  HTMLDivElement,
+  { background: string; fontFamily: string; children: ReactNode }
+>(function Canvas({ background, fontFamily, children }, ref) {
   return (
     <div
+      ref={ref}
       className="absolute inset-0 overflow-hidden"
       style={{ containerType: "size", background, fontFamily }}
     >
       {children}
     </div>
   );
-}
+});
 
 /**
  * Browser twin of renderScreenshots in src/render.ts: the same compose()
@@ -803,9 +998,13 @@ function ScreenshotScene({
   captureUrl,
   secondCaptureUrl,
   secondSceneId,
-  decorations,
+  themeDecorations,
+  sceneDecorations,
+  resolveArtUrl,
+  sceneTransform,
   locale,
   onEdit,
+  editor,
 }: {
   spec: (typeof LAYOUTS)[keyof typeof LAYOUTS];
   slice: number;
@@ -836,12 +1035,22 @@ function ScreenshotScene({
   captureUrl: string;
   secondCaptureUrl: string | undefined;
   secondSceneId: string | undefined;
-  decorations: Decoration[];
+  /** theme.decorations - drawn on every scene, never selectable here. */
+  themeDecorations: Decoration[];
+  /** This scene's own decorations, canonical (config-relative image src) form - the element editor's model. */
+  sceneDecorations: Decoration[];
+  resolveArtUrl: (configSrc: string) => string;
+  sceneTransform: SceneTransform;
   locale: string;
   onEdit?: (field: "headline" | "subhead", text: string) => void;
+  /** Set only for the lightbox's own render; mounts the selection/drag/resize/rotate overlay. */
+  editor?: EditorEntryInfo;
 }) {
   const effectiveGeom = geom ?? frame;
-  const c = compose(spec, tile, theme, { screenOnly, geom: effectiveGeom, copyScale });
+  const base = compose(spec, tile, theme, { screenOnly, geom: effectiveGeom, copyScale });
+  const c = applyTransform(base, sceneTransform, tile);
+  const displayDecorations = sceneDecorations.map((d) => displayDecoration(d, resolveArtUrl));
+  const containerRef = useRef<HTMLDivElement>(null);
   const { w, h } = cq(tile);
   // Wider-than-reference tiles compose at a narrower design width; type
   // follows it, times the device's copy scale.
@@ -872,7 +1081,7 @@ function ScreenshotScene({
   };
 
   return (
-    <Canvas background="transparent" fontFamily={fontFamily}>
+    <Canvas ref={containerRef} background="transparent" fontFamily={fontFamily}>
       {/* Background color/gradient and theme/scene backgroundImage, spanning
           the whole composition (both panorama tiles together), as drawScene
           fills and covers before anything else. */}
@@ -929,6 +1138,8 @@ function ScreenshotScene({
       <div style={compositionBox}>
         {copy ? (
           <div
+            data-edit="copy"
+            onPointerDown={editor ? () => editor.onSelect({ kind: "copy" }) : undefined}
             style={{
               position: "absolute",
               left: w(copy.box.left),
@@ -1012,7 +1223,7 @@ function ScreenshotScene({
         ) : null}
 
         <Decorations
-          decorations={decorations}
+          decorations={themeDecorations}
           layer="back"
           tile={tile}
           locale={locale}
@@ -1024,23 +1235,39 @@ function ScreenshotScene({
           devices={c.devices}
           geom={effectiveGeom}
         />
+        <Decorations
+          decorations={displayDecorations}
+          layer="back"
+          tile={tile}
+          locale={locale}
+          headlineColor={headlineColor}
+          fontFamily={fontFamily}
+          scriptFamily={scriptFamily}
+          captureUrl={captureUrl}
+          secondCaptureUrl={secondCaptureUrl}
+          devices={c.devices}
+          geom={effectiveGeom}
+          onSelect={editor?.onSelect}
+        />
 
-        {c.devices.map((device) => {
+        {c.devices.map((device, i) => {
           const url = device.capture === "secondary" ? secondCaptureUrl : captureUrl;
           return (
             <DeviceView
               key={device.capture}
+              index={i}
               device={device}
               tile={tile}
               frameUrl={screenOnly ? null : frameUrl}
               captureUrl={url}
               missing={url ? undefined : (secondSceneId ?? "secondScene")}
+              onSelect={editor?.onSelect}
             />
           );
         })}
 
         <Decorations
-          decorations={decorations}
+          decorations={themeDecorations}
           layer="front"
           tile={tile}
           locale={locale}
@@ -1052,7 +1279,48 @@ function ScreenshotScene({
           devices={c.devices}
           geom={effectiveGeom}
         />
+        <Decorations
+          decorations={displayDecorations}
+          layer="front"
+          tile={tile}
+          locale={locale}
+          headlineColor={headlineColor}
+          fontFamily={fontFamily}
+          scriptFamily={scriptFamily}
+          captureUrl={captureUrl}
+          secondCaptureUrl={secondCaptureUrl}
+          devices={c.devices}
+          geom={effectiveGeom}
+          onSelect={editor?.onSelect}
+        />
       </div>
+
+      {editor ? (
+        <EditorOverlay
+          containerRef={containerRef}
+          tile={tile}
+          span={spec.span}
+          composition={c}
+          baseComposition={base}
+          decorations={sceneDecorations}
+          onDecorations={editor.onDecorations}
+          transform={sceneTransform}
+          onTransform={editor.onTransform}
+          selection={editor.selection}
+          onSelect={editor.onSelect}
+          pickRegionIndex={editor.pickRegionIndex}
+          onPickRegionDone={(from) => {
+            const sel = editor.selection;
+            if (sel?.kind === "decoration") {
+              const next = sceneDecorations.map((d, i) =>
+                i === sel.index && d.kind === "callout" ? { ...d, from } : d,
+              );
+              editor.onDecorations(next, `pick-region:${editor.sceneId}`);
+            }
+            editor.onPickRegion(null);
+          }}
+        />
+      ) : null}
     </Canvas>
   );
 }
@@ -1064,17 +1332,22 @@ function ScreenshotScene({
  */
 function DeviceView({
   device,
+  index,
   tile,
   frameUrl,
   captureUrl,
   missing,
+  onSelect,
 }: {
   device: Composition["devices"][number];
+  /** This device's position among the scene's devices, back to front; matches SceneTransform.devices and Selection. */
+  index: number;
   tile: { width: number; height: number };
   frameUrl: string | null;
   captureUrl: string | undefined;
   /** Scene id to name in the placeholder when the capture is missing. */
   missing: string | undefined;
+  onSelect?: (sel: Selection) => void;
 }) {
   const { w, h } = cq(tile);
   const { frame, screen } = device;
@@ -1082,6 +1355,8 @@ function DeviceView({
   const pct = (v: number, of: number) => `${(v / of) * 100}%`;
   return (
     <div
+      data-edit={`device:${index}`}
+      onPointerDown={onSelect ? () => onSelect({ kind: "device", index }) : undefined}
       style={{
         position: "absolute",
         left: w(frame.left),
@@ -1169,6 +1444,7 @@ function Decorations({
   secondCaptureUrl,
   devices,
   geom,
+  onSelect,
 }: {
   decorations: Decoration[];
   layer: "back" | "front";
@@ -1181,6 +1457,8 @@ function Decorations({
   secondCaptureUrl: string | undefined;
   devices: Composition["devices"];
   geom: FrameGeometry;
+  /** Set only for the editor's own (live, scene-level) decorations, which become selectable. */
+  onSelect?: (sel: Selection) => void;
 }) {
   const { w, h } = cq(tile);
   const inset = Math.min(tile.width, tile.height) * BADGE.inset;
@@ -1189,11 +1467,18 @@ function Decorations({
       {decorations.map((d, i) => {
         if (layerOf(d) !== layer) return null;
         const key = `${d.kind}-${i}`;
+        const editProps = onSelect
+          ? {
+              "data-edit": `decoration:${i}`,
+              onPointerDown: () => onSelect({ kind: "decoration", index: i }),
+            }
+          : {};
         switch (d.kind) {
           case "badge":
             return (
               <div
                 key={key}
+                {...editProps}
                 style={{
                   position: "absolute",
                   ...(d.position.endsWith("left") ? { left: w(inset) } : { right: w(inset) }),
@@ -1215,6 +1500,7 @@ function Decorations({
             return (
               <img
                 key={key}
+                {...editProps}
                 src={`/${d.src}`}
                 alt=""
                 draggable={false}
@@ -1246,6 +1532,7 @@ function Decorations({
             return (
               <div
                 key={key}
+                {...editProps}
                 style={{
                   position: "absolute",
                   left: w(g.box.left),
@@ -1286,6 +1573,7 @@ function Decorations({
             return (
               <div
                 key={key}
+                {...editProps}
                 style={{
                   position: "absolute",
                   left: w(tile.width * d.x),
@@ -1329,6 +1617,7 @@ function Decorations({
             return (
               <svg
                 key={key}
+                {...editProps}
                 aria-hidden
                 viewBox={`${left} ${top} ${width} ${g.height}`}
                 style={{
@@ -1773,6 +2062,41 @@ function Tile({
       ) : null}
     </div>
   );
+}
+
+/**
+ * "Reset element" in the inspector: the copy block or a device drops its
+ * transform back to the layout's own geometry; a decoration still present in
+ * the config restores to its config values, one newly added by the editor is
+ * removed instead (there is nothing to fall back to).
+ */
+function resetSelected(editor: EditorEntryInfo): void {
+  const sel = editor.selection;
+  if (!sel) return;
+  if (sel.kind === "copy") {
+    const t = { ...editor.transform };
+    delete t.copy;
+    editor.onTransform(t, "reset:copy");
+    return;
+  }
+  if (sel.kind === "device") {
+    const devices = [...(editor.transform.devices ?? [])];
+    devices[sel.index] = {};
+    editor.onTransform({ ...editor.transform, devices }, `reset:device:${sel.index}`);
+    return;
+  }
+  if (sel.index < editor.baselineDecorations.length) {
+    const next = editor.decorations.map((d, i) =>
+      i === sel.index ? editor.baselineDecorations[i]! : d,
+    );
+    editor.onDecorations(next, `reset:decoration:${sel.index}`);
+  } else {
+    editor.onDecorations(
+      editor.decorations.filter((_, i) => i !== sel.index),
+      `reset:decoration:${sel.index}`,
+    );
+    editor.onSelect(null);
+  }
 }
 
 /** Position of a scene id in the saved order; unlisted ids sort last, in config order. */
