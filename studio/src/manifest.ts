@@ -32,6 +32,8 @@ export type Theme = {
   backgroundImage?: string;
   /** One wide image laid across the whole strip; a url under out/web. */
   backdrop?: string;
+  /** Gradient over background art, under the copy; mirrors Theme.scrim in src/config.ts. */
+  scrim?: { color: string; height: number };
 };
 
 /** Mirrors DecorationLayer in src/config.ts. */

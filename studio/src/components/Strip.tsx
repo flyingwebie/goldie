@@ -873,6 +873,27 @@ function ScreenshotScene({
 
   return (
     <Canvas background="transparent" fontFamily={fontFamily}>
+      {/* Background color/gradient and theme/scene backgroundImage, spanning
+          the whole composition (both panorama tiles together), as drawScene
+          fills and covers before anything else. */}
+      <div style={{ ...compositionBox, background: resolvedBackground }}>
+        {bgImageUrl ? (
+          <img
+            src={`/${bgImageUrl}`}
+            alt=""
+            draggable={false}
+            style={{
+              position: "absolute",
+              inset: 0,
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+            }}
+          />
+        ) : null}
+      </div>
+
+      {/* The strip-wide backdrop, over the background as drawScene draws it. */}
       {backdropUrl ? (
         <div
           style={{
@@ -893,25 +914,16 @@ function ScreenshotScene({
         </div>
       ) : null}
 
-      {/* Background color/gradient and theme/scene backgroundImage, spanning
-          the whole composition (both panorama tiles together), as drawScene
-          fills and covers before anything else. */}
-      <div style={{ ...compositionBox, background: resolvedBackground }}>
-        {bgImageUrl ? (
-          <img
-            src={`/${bgImageUrl}`}
-            alt=""
-            draggable={false}
-            style={{
-              position: "absolute",
-              inset: 0,
-              width: "100%",
-              height: "100%",
-              objectFit: "cover",
-            }}
-          />
-        ) : null}
-      </div>
+      {/* The scrim over background art, under the copy (drawScene's theme.scrim). */}
+      {theme.scrim && (bgImageUrl || backdropUrl) ? (
+        <div
+          style={{
+            ...compositionBox,
+            height: `${theme.scrim.height * 100}%`,
+            background: `linear-gradient(180deg, ${theme.scrim.color} 0%, rgba(0,0,0,0) 100%)`,
+          }}
+        />
+      ) : null}
 
       {/* Copy, decorations and devices, over the backdrop and backgrounds. */}
       <div style={compositionBox}>

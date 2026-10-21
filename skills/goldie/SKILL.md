@@ -321,6 +321,7 @@ the next prompt can build on it.
 | A different art direction | `art.style`, then regenerate | `concepts`, `art --force`, `frame`, `manifest` |
 | Captions on the App Store preview | preview `segments[].caption` (`references/promo.md`) | `preview`, `manifest` |
 | A video for social media or ads | `promo` (`references/promo.md`) | `promo` |
+| The app needs a login or tenant the flows cannot create | sign in once on the simulator, then `keepAppData: true` (iOS); flows start with `launch:` from that session | `capture`, `frame`, `manifest` |
 
 `capture` replays every flow; to re-capture only what changed, keep the
 other scenes as they are and accept the extra minute, or delete only the

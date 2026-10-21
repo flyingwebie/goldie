@@ -98,6 +98,15 @@ export function drawScene(ctx: SKRSContext2D, s: SceneInput, motion: Motion = {}
     );
   }
 
+  const scrim = s.theme.scrim;
+  if (scrim && (s.backgroundImage || s.backdrop)) {
+    const g = ctx.createLinearGradient(0, 0, 0, c.height * scrim.height);
+    g.addColorStop(0, scrim.color);
+    g.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, c.width, c.height * scrim.height);
+  }
+
   if (c.copy) drawCopy(ctx, s, motion);
 
   const layered = s.decorations.map((d, index) => ({ d, index }));

@@ -357,6 +357,13 @@ export type Theme = {
    * background and any backgroundImage.
    */
   backdrop?: string;
+  /**
+   * A gradient from `color` at the top edge to transparent at `height` (a
+   * fraction of the tile), drawn over background images and under the copy,
+   * so light copy stays legible over a bright photo. Only tiles with a
+   * background image or backdrop get it.
+   */
+  scrim?: { color: string; height: number };
 };
 
 /**
@@ -426,6 +433,15 @@ export type GoldieConfig = {
   localizedCaptures?: boolean;
   /** Simulator appearance for every capture. */
   appearance: "light" | "dark";
+  /**
+   * Keep the installed app and its data instead of reinstalling before a
+   * capture. For apps that need a signed-in session (or a dev client already
+   * pointed at Metro) that a flow cannot recreate: sign in once on the
+   * simulator, then capture. The app must already be installed; flows then
+   * start from whatever state it was left in, so they must not assume a fresh
+   * install. iOS devices only; android always reinstalls.
+   */
+  keepAppData?: boolean;
   /**
    * Device bezel art for the screenshots: one bundled variant from assets/,
    * which applies to the device it is drawn for while the others keep their

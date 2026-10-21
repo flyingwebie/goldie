@@ -32,6 +32,8 @@ const config: GoldieConfig = {
   // simulator pinned to it, into out/raw/<device>/<locale>/. Off: one capture, in the first locale.
   // localizedCaptures: true,
   appearance: "light",           // simulator appearance for every capture
+  // keepAppData: true,          // capture the installed app as it is (a signed-in session,
+  //                             // a dev client on Metro) instead of reinstalling it; iOS only
 
   // Bundled bezels: "17-pro-silver" | "17-pro-blue" | "17-pro-orange" for the iPhone,
   // "ipad-pro-13-silver" | "ipad-pro-13-space-gray" for the iPad. Pick the finish
@@ -172,6 +174,7 @@ theme: {
   },
   backgroundImage: "art/meadow.png", // cover-fitted under every tile
   backdrop: "art/meadow-strip.png",  // one wide image sliced across the whole strip
+  scrim: { color: "rgba(0,0,0,0.8)", height: 0.4 },  // keeps copy legible over bright art
 }
 ```
 

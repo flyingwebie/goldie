@@ -31,8 +31,8 @@ export function circleMarkPath(box: Box, seed = 7): string {
   const cy = box.top + box.height / 2;
   // Hug the word: a fixed margin in line-height units, not a share of the
   // width, so a long word does not swallow its neighbours.
-  const rx = box.width / 2 + box.height * 0.28;
-  const ry = box.height / 2 + box.height * 0.16;
+  const rx = box.width / 2 + box.height * 0.17;
+  const ry = box.height / 2 + box.height * 0.14;
   const turns = 1.12;
   const steps = 48;
   const start = -Math.PI * 0.85;
