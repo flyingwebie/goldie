@@ -59,6 +59,9 @@ argent flows in `.argent/flows`. Then run:
 goldie doctor     Check tools, simulators and flows
 goldie all        Capture, frame, render the preview and verify
 goldie studio     Preview and tweak the assets in the browser
+goldie art        Generate the config's AI art layers
+goldie concepts   Compare art directions on draft boards
+goldie promo      Render the social promo video
 ```
 
 The output goes to `out/screenshots/<device>/<locale>/` and
@@ -137,6 +140,37 @@ renders the same result. The config also takes:
   fontFamily: "Zain",
   ```
 - `decorations`: badges or images layered behind the device.
+
+## Emotional screenshots
+
+Feature lists don't convert; feelings do. Beyond the bezel and the headline,
+goldie draws the layers that make store pages sell, all composited around the
+real, pixel-true capture:
+
+- **Stressed words** in headlines (`"Clear your *head*"`) as an accent color, a
+  highlighter band, a hand-drawn circle or underline, or a script word, plus a
+  handwritten **kicker** above the headline.
+- **Callouts**: a card, row or chip cut from the real screen and lifted out of
+  the phone, enlarged, tilted and shadowed.
+- **Front-layer art** that overlaps the device (a mascot, objects, stickers),
+  **speech bubbles**, **rating laurels**, a `poster` layout with no device, a
+  background image per tile, and one **backdrop** image sliced across the whole
+  strip.
+- **AI art** (`goldie art`): backgrounds, characters, 3D objects and stickers
+  from OpenAI (`OPENAI_API_KEY`) or fal.ai (`FAL_KEY`), in one of eight style
+  presets or your own direction, with your brand art as references. Cutouts
+  come out transparent; results are cached by content hash and guarded by a
+  budget. `goldie concepts --styles a,b,c` renders draft boards so you can pick
+  a direction first.
+- **Promo video** (`goldie promo`): the designed tiles animated for TikTok,
+  Reels, X or YouTube in 9:16, 4:5 or 1:1, with kinetic headlines, springing
+  devices, popping callouts, an outro card, an optional AI-animated intro clip
+  and a music bed (your file, or generated).
+- **Preview captions**: a caption per App Store preview segment, the text
+  overlay App Review Guideline 2.3.4 allows.
+
+The skill carries the playbook: a creative brief, story arcs, headline rules,
+frame-breaking recipes and a checklist (`skills/goldie/references/storytelling.md`).
 
 ## Remarks
 

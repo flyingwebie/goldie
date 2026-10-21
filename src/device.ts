@@ -525,6 +525,12 @@ export async function warmUp(udid: string, bundleId: string): Promise<void> {
   await argent.run("await-screen-idle", { udid, timeoutMs: 60000 }).catch(() => {});
 }
 
+/** Whether an app is installed on an iOS simulator. */
+export async function isInstalled(udid: string, bundleId: string): Promise<boolean> {
+  const r = await exec("xcrun", ["simctl", "get_app_container", udid, bundleId], { quiet: true });
+  return r.code === 0;
+}
+
 export async function installApp(udid: string, appPath: string, bundleId: string): Promise<void> {
   await argent.run("reinstall-app", { udid, bundleId, appPath });
 }

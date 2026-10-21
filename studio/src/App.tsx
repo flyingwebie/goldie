@@ -6,8 +6,10 @@ import {
   TriangleAlertIcon,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { ConceptsView } from "./components/ConceptsView";
 import { EmptyState } from "./components/EmptyState";
-import { Sidebar } from "./components/Sidebar";
+import { PromoView } from "./components/PromoView";
+import { Sidebar, type Stage } from "./components/Sidebar";
 import { Strip, type StripView } from "./components/Strip";
 import { useHistory } from "./lib/useHistory";
 import {
@@ -133,10 +135,14 @@ function Loaded({ manifest, saved }: { manifest: StoreManifest; saved: SavedDesi
     new URLSearchParams(window.location.search).get("dark") === "1" || view.dark === true,
   );
   const [stripView, setStripView] = useState<StripView>(view.view === "grid" ? "grid" : "strip");
+  const [stage, setStage] = useState<Stage>("strip");
   const knownLayout = (key: string | undefined) =>
     key && design.layouts.some((l) => l.key === key) ? key : undefined;
   const { state, set } = useHistory<DesignState>(() => ({
     background: saved.background ?? design.theme.background,
+    // Whether a studio background choice is in force; unset, every scene's
+    // own `background` stands, as the CLI composes it.
+    backgroundOverridden: saved.background !== undefined,
     frames: initialFrames(design, saved),
     fontFamily: saved.fontFamily ?? design.theme.fontFamily,
     copy: saved.copy ?? {},
@@ -148,6 +154,7 @@ function Loaded({ manifest, saved }: { manifest: StoreManifest; saved: SavedDesi
   }));
   const {
     background,
+    backgroundOverridden,
     frames,
     fontFamily,
     copy,
@@ -163,7 +170,11 @@ function Loaded({ manifest, saved }: { manifest: StoreManifest; saved: SavedDesi
     <K extends keyof DesignState>(key: K) =>
     (value: DesignState[K]) =>
       set(key, (prev) => ({ ...prev, [key]: value }));
-  const setBackground = field("background");
+  // Picking a background turns the override on for the rest of the session;
+  // every scene's own background is cleared from then on, matching the CLI's
+  // applyDesign.
+  const setBackground = (value: string) =>
+    set("background", (prev) => ({ ...prev, background: value, backgroundOverridden: true }));
   // The frame picker edits the variant of the device on show; "" means custom art.
   const frame = frames[device] ?? "";
   const setFrame = (value: string) =>
@@ -214,7 +225,7 @@ function Loaded({ manifest, saved }: { manifest: StoreManifest; saved: SavedDesi
     const timer = setTimeout(() => {
       const chosen = Object.fromEntries(Object.entries(frames).filter(([, v]) => v));
       saveDesign({
-        background,
+        background: backgroundOverridden ? background : undefined,
         frames: Object.keys(chosen).length > 0 ? chosen : undefined,
         fontFamily,
         copy: Object.keys(copy).length > 0 ? copy : undefined,
@@ -229,7 +240,18 @@ function Loaded({ manifest, saved }: { manifest: StoreManifest; saved: SavedDesi
       );
     }, SAVE_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [background, frames, fontFamily, copy, order, template, layout, screenOnly, sceneLayouts]);
+  }, [
+    background,
+    backgroundOverridden,
+    frames,
+    fontFamily,
+    copy,
+    order,
+    template,
+    layout,
+    screenOnly,
+    sceneLayouts,
+  ]);
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark);
@@ -279,6 +301,8 @@ function Loaded({ manifest, saved }: { manifest: StoreManifest; saved: SavedDesi
         onDark={setDark}
         view={stripView}
         onView={setStripView}
+        stage={stage}
+        onStage={setStage}
         background={background}
         frame={frame}
         frames={frames}
@@ -296,7 +320,11 @@ function Loaded({ manifest, saved }: { manifest: StoreManifest; saved: SavedDesi
 
       <div className="flex min-w-0 flex-1 flex-col">
         <main className="relative grid min-h-0 flex-1 place-items-center-safe overflow-auto p-10">
-          {spec && captures ? (
+          {stage === "promo" && manifest.promo ? (
+            <PromoView promo={manifest.promo} locale={locale} />
+          ) : stage === "concepts" && manifest.concepts ? (
+            <ConceptsView concepts={manifest.concepts} />
+          ) : spec && captures ? (
             <div className="w-full max-w-[1400px]">
               <Strip
                 design={design}
@@ -304,6 +332,7 @@ function Loaded({ manifest, saved }: { manifest: StoreManifest; saved: SavedDesi
                 spec={spec}
                 locale={locale}
                 background={background}
+                backgroundOverridden={backgroundOverridden}
                 frameUrl={frameUrl}
                 fontFamily={previewFontFamily}
                 copy={copy}
@@ -351,6 +380,8 @@ function Loaded({ manifest, saved }: { manifest: StoreManifest; saved: SavedDesi
 /** Everything the undo stack tracks: the design choices saved to goldie.design.json. */
 type DesignState = {
   background: string;
+  /** Whether `background` overrides every scene's own background. */
+  backgroundOverridden: boolean;
   /** Bezel variant per device key; "" or absent means the config's custom art. */
   frames: Record<string, string>;
   fontFamily: string;

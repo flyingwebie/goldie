@@ -46,6 +46,30 @@ export const FONTS = {
     fallback: "system-ui, sans-serif",
     files: { 400: "Montserrat-400.ttf", 700: "Montserrat-700.ttf" },
   },
+  // Display faces for expressive headlines. A family with a single cut lists
+  // it under 700 too, so a bold headline draws the real face instead of a
+  // synthesized bold (canvas) or a fallback (browser).
+  bricolage: {
+    family: "Bricolage Grotesque",
+    fallback: "system-ui, sans-serif",
+    files: { 400: "BricolageGrotesque-400.ttf", 700: "BricolageGrotesque-800.ttf" },
+  },
+  anton: {
+    family: "Anton",
+    fallback: "Impact, sans-serif",
+    files: { 400: "Anton-400.ttf", 700: "Anton-400.ttf" },
+  },
+  "instrument-serif": {
+    family: "Instrument Serif",
+    fallback: "Georgia, serif",
+    files: { 400: "InstrumentSerif-400.ttf", 700: "InstrumentSerif-400.ttf" },
+  },
+  // Handwritten: kickers, script emphasis, speech bubbles.
+  caveat: {
+    family: "Caveat",
+    fallback: "cursive",
+    files: { 400: "Caveat-400.ttf", 700: "Caveat-700.ttf" },
+  },
   "noto-sans-sc": {
     family: "Noto Sans SC",
     fallback: '"PingFang SC", "Microsoft YaHei", sans-serif',

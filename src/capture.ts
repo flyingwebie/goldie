@@ -90,7 +90,18 @@ export async function capture(
   await device.prepare(deviceKey, udid, locale, cfg.appearance);
   // A reinstall wipes app data, which is what makes a re-capture deterministic:
   // flows that create records start from the same empty state every run.
-  await device.installApp(udid, app.path, app.id);
+  // keepAppData trades that for a session the flows cannot recreate (a
+  // sign-in, a dev client pointed at Metro).
+  if (cfg.keepAppData && spec.platform === "ios") {
+    if (!(await device.isInstalled(udid, app.id))) {
+      throw new Error(
+        `keepAppData is on but ${app.id} is not installed on ${udid}. Install it and sign in once, then capture.`,
+      );
+    }
+    console.log(`  keeping the installed ${app.id} and its data`);
+  } else {
+    await device.installApp(udid, app.path, app.id);
+  }
   // First launch after a reinstall pays for a cold JS bundle, which can outlast
   // the launch step's devtools handshake budget. Burn that cost here instead.
   await device.warmUp(udid, app.id);

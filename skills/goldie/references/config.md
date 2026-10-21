@@ -32,6 +32,8 @@ const config: GoldieConfig = {
   // simulator pinned to it, into out/raw/<device>/<locale>/. Off: one capture, in the first locale.
   // localizedCaptures: true,
   appearance: "light",           // simulator appearance for every capture
+  // keepAppData: true,          // capture the installed app as it is (a signed-in session,
+  //                             // a dev client on Metro) instead of reinstalling it; iOS only
 
   // Bundled bezels: "17-pro-silver" | "17-pro-blue" | "17-pro-orange" for the iPhone,
   // "ipad-pro-13-silver" | "ipad-pro-13-space-gray" for the iPad. Pick the finish
@@ -143,30 +145,89 @@ strip, or write a sequence when the user describes the rhythm they want
 | `panorama` | two tiles, copy left, one big tilted device across the seam | takes 2 of the 10 slots |
 | `panorama-duo` | two tiles sharing a headline, a screen each side | a second capture, 2 slots |
 | `minimal` | no copy, a large centred device | |
+| `poster` | copy on top, no device: the art carries the tile | art layers or a backgroundImage |
 
-Two-screen layouts borrow the next scene's capture unless the scene sets
+`poster` suits the opener, a story turn or a founder tile, built from a
+`backgroundImage` or image layers. Two-screen layouts borrow the next scene's capture unless the scene sets
 `secondScene`. Choosing: lead with `classic`, `hero` or a `panorama` pair,
 since the first two tiles are what most visitors see. Use `duo` with
 `secondScene` for a list-and-detail pair. Keep tilted tiles to one in a row, and `minimal` for a
 breather mid-strip. Panorama copy must read on the left tile alone.
 `theme.screenOnly: true` removes the bezel in every layout.
 
+## Emotional type and art
+
+Theme fields for the storytelling layer (see `storytelling.md` for when to use
+which):
+
+```ts
+theme: {
+  accentColor: "#E44B2A",            // stressed words, marks, kickers
+  emphasis: "circle",                // color | highlight | underline | circle | script
+  scriptFontFamily: '"Caveat", cursive',   // kickers and script emphasis (the default)
+  headline: {
+    scale: 1.2,                      // multiplies the layout's headline size
+    weight: 800,
+    uppercase: true,
+    stroke: { color: "#000000", width: 0.006 },                 // fractions of the tile width
+    shadow: { color: "rgba(0,0,0,0.35)", blur: 0.02, offsetY: 0.006 },
+  },
+  backgroundImage: "art/meadow.png", // cover-fitted under every tile
+  backdrop: "art/meadow-strip.png",  // one wide image sliced across the whole strip
+  scrim: { color: "rgba(0,0,0,0.8)", height: 0.4 },  // keeps copy legible over bright art
+}
+```
+
+Per scene: `kicker` (a handwritten line above the headline, per locale),
+`backgroundImage` (overrides the theme's; `"none"` clears it), and stressed
+words in the headline itself: `"Clear your *head*"` (`\*` for a literal
+asterisk). Bundled display faces for headlines: `bricolage` (Bricolage
+Grotesque), `anton` (condensed, heavy; pair with `uppercase`),
+`instrument-serif` (editorial serif); `caveat` is the handwritten face.
+
 ## Decorations
 
-Layers drawn over the background and under the device. `theme.decorations`
-applies to every tile, `scenes[].decorations` to one; both stack.
+Layers on a tile. `theme.decorations` applies to every tile,
+`scenes[].decorations` to one; both stack. `layer: "back"` (the default, and
+callouts' exception) draws between the copy and the device; `layer: "front"`
+draws over the device, which is how art breaks the frame. Positioned layers
+take `x`/`y` (left and top) and `width` as fractions of one tile; a
+panorama's second tile starts at `x: 1`.
 
 ```ts
 { kind: "badge", text: { "en-US": "Editors' Choice" }, position: "top-right",
   background: "#0E1B2A", color: "#FFFFFF" }          // colors optional
-{ kind: "image", src: "art/sticker.png",              // relative to the config
-  x: 0.7, y: 0.1, width: 0.25, rotate: 12 }           // fractions of the tile
+{ kind: "image", src: "art/fox.png",                  // relative to the config
+  x: 0.55, y: 0.6, width: 0.45, rotate: 6,            // fractions of the tile
+  layer: "front", flip: true, shadow: true, opacity: 1 }
+// A piece of the real screen, enlarged over the phone's edge. `from` is the
+// region as fractions of the capture; the card keeps its aspect.
+{ kind: "callout", from: { x: 0.03, y: 0.40, width: 0.94, height: 0.13 },
+  x: 0.02, y: 0.60, width: 0.96, rotate: -3,
+  capture: "primary",                                 // or "secondary" in duo layouts
+  radius: 0.03, shadow: true, border: "#FFFFFF" }     // optional, defaults shown
+{ kind: "bubble", text: { "en-US": "I can't find anything!" },
+  x: 0.08, y: 0.22, width: 0.6,                       // width is the maximum; it shrinks to the text
+  tail: "bottom-left",                                // bottom-right | top-left | top-right | none
+  font: "script", size: 0.05, rotate: -4,
+  background: "#FFFFFF", color: "#111111", layer: "front" }
+{ kind: "rating", value: "4.9", label: { "en-US": "200k+ happy users" },
+  x: 0.25, y: 0.82, width: 0.5, color: "#111111",
+  laurels: true, background: "#FFFFFF" }              // the plate keeps it legible over art
 ```
+
+## Art and video
+
+The `art` block (generated art layers) is documented in `art.md`, the `promo`
+block and preview `caption`s in `promo.md`.
 
 ## Writing the copy
 
-- **Headlines**: 2 to 5 words, benefit-led, sentence case. Name what the user
-  gets ("Find anything, fast"), never what the UI is ("Search screen").
+`storytelling.md` holds the full playbook; in short:
+
+- **Headlines**: 2 to 5 words, an outcome or a feeling, with one stressed
+  word. Name what the user gets ("Find anything, fast"), never what the UI is
+  ("Search screen").
 - **Subheads**: one short sentence expanding the headline. Optional; drop it
   when the headline stands alone.
 - **Badges**: two or three words at most ("Editors' Choice", "New in 2.0").
