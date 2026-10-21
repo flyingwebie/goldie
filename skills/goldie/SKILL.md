@@ -162,9 +162,13 @@ Then ask which features and screens to lead with, in story order:
 
 - In chat, a multi-select question (`AskUserQuestion` when available)
   listing the features, then one for screens, each always offering a "let
-  goldie decide" option.
-- Or tell the user they can pick instead in the studio's Plan view
-  (http://localhost:4321, once Step 5 opens it).
+  goldie decide" option. Question tools cap the options (Claude Code: 4 per
+  question), so offer your three strongest candidates plus "Let goldie
+  decide", and name the rest in the question text so the user can type them
+  under "Other".
+- And point the user to the studio's Plan view for the full list with
+  thumbnails (start the studio early for this: `goldie studio --no-open`
+  serves the Plan view before any capture exists).
 
 Read `goldie/plan.json` before choosing, when it exists: it is the answer.
 `decide: "goldie"` means choose yourself - the storytelling playbook below
