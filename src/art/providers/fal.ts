@@ -195,6 +195,16 @@ function costFor(family: FalFamily, model: string | undefined): number {
 }
 
 /** The request body each family's endpoint expects, per its fal OpenAPI schema. */
+/**
+ * Nano Banana Pro renders 1K by default. A final asset asks for 2K (same
+ * price), and a strip backdrop, which spans every tile of the store page,
+ * for 4K (twice the price), so neither turns soft when cover-fitted.
+ */
+export function nanoBananaResolution(req: Pick<ImageRequest, "quality" | "aspect">): string {
+  if (req.quality !== "final") return "1K";
+  return req.aspect === "strip" ? "4K" : "2K";
+}
+
 function inputFor(family: FalFamily, req: ImageRequest, hasRefs: boolean): Record<string, unknown> {
   switch (family) {
     case "nano-banana": {
@@ -202,6 +212,7 @@ function inputFor(family: FalFamily, req: ImageRequest, hasRefs: boolean): Recor
         prompt: req.prompt,
         aspect_ratio: NANO_BANANA_ASPECT[req.aspect],
         output_format: "png",
+        resolution: nanoBananaResolution(req),
       };
       if (hasRefs) input.image_urls = req.references.map((r) => dataUri(r));
       return input;
@@ -233,7 +244,9 @@ function inputFor(family: FalFamily, req: ImageRequest, hasRefs: boolean): Recor
 export function falProvider(apiKey: string): ImageProvider {
   return {
     estimateUsd(req) {
-      const base = costFor(familyFor(req), req.model);
+      const family = familyFor(req);
+      const fourK = family === "nano-banana" && nanoBananaResolution(req) === "4K";
+      const base = costFor(family, req.model) * (fourK ? 2 : 1);
       return req.transparent ? base + FAL_COST_USD.birefnet : base;
     },
 

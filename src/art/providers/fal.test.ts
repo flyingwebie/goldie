@@ -229,3 +229,12 @@ describe("variantFor", () => {
     expect(variantFor("fal-ai/recraft-v3", true)).toBe("fal-ai/recraft-v3");
   });
 });
+
+describe("nanoBananaResolution", () => {
+  test("final art at 2K, a strip backdrop at 4K, drafts at 1K", async () => {
+    const { nanoBananaResolution } = await import("./fal.ts");
+    expect(nanoBananaResolution({ quality: "final", aspect: "square" })).toBe("2K");
+    expect(nanoBananaResolution({ quality: "final", aspect: "strip" })).toBe("4K");
+    expect(nanoBananaResolution({ quality: "draft", aspect: "strip" })).toBe("1K");
+  });
+});
