@@ -6,22 +6,36 @@ import {
   TriangleAlertIcon,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
 import { ConceptsView } from "./components/ConceptsView";
 import { EmptyState } from "./components/EmptyState";
+import { HistoryView } from "./components/HistoryView";
+import { PlanView } from "./components/PlanView";
 import { PromoView } from "./components/PromoView";
+import { SettingsView } from "./components/SettingsView";
 import { Sidebar, type Stage } from "./components/Sidebar";
 import { Strip, type StripView } from "./components/Strip";
+import {
+  type HistoryEntry,
+  loadHistoryDesign,
+  restoreHistoryEntry,
+  timeAgo,
+} from "./lib/designHistory";
 import { useHistory } from "./lib/useHistory";
 import {
+  type ArtLibraryImage,
   type BundledFont,
+  type Decoration,
   type Design,
   type DeviceEntry,
   type DeviceType,
+  loadArtLibrary,
   loadDesign,
   loadManifest,
   ManifestError,
   type SavedDesign,
   type SceneCopy,
+  type SceneTransform,
   type StoreManifest,
   saveDesign,
 } from "./manifest";
@@ -136,22 +150,29 @@ function Loaded({ manifest, saved }: { manifest: StoreManifest; saved: SavedDesi
   );
   const [stripView, setStripView] = useState<StripView>(view.view === "grid" ? "grid" : "strip");
   const [stage, setStage] = useState<Stage>("strip");
-  const knownLayout = (key: string | undefined) =>
-    key && design.layouts.some((l) => l.key === key) ? key : undefined;
-  const { state, set } = useHistory<DesignState>(() => ({
-    background: saved.background ?? design.theme.background,
-    // Whether a studio background choice is in force; unset, every scene's
-    // own `background` stands, as the CLI composes it.
-    backgroundOverridden: saved.background !== undefined,
-    frames: initialFrames(design, saved),
-    fontFamily: saved.fontFamily ?? design.theme.fontFamily,
-    copy: saved.copy ?? {},
-    layout: knownLayout(saved.layout) ?? design.layout,
-    template: initialTemplate(design, saved),
-    screenOnly: saved.screenOnly ?? design.screenOnly,
-    sceneLayouts: initialSceneLayouts(design, saved, knownLayout),
-    order: initialOrder(design, saved),
-  }));
+  const {
+    state,
+    set: rawSet,
+    undo,
+    redo,
+    canUndo,
+    canRedo,
+  } = useHistory<DesignState>(() => designStateFromSaved(design, saved));
+  // A version-history row loaded into the strip to look at, without saving
+  // (the banner below carries Restore/Cancel); any live edit cancels it, so
+  // the control the user just touched is never shadowed by a stale preview.
+  const [historyPreview, setHistoryPreview] = useState<{
+    id: string;
+    timestamp: string;
+    saved: SavedDesign;
+  } | null>(null);
+  const set: typeof rawSet = (key, update) => {
+    setHistoryPreview(null);
+    rawSet(key, update);
+  };
+  const effectiveState = historyPreview
+    ? designStateFromSaved(design, historyPreview.saved)
+    : state;
   const {
     background,
     backgroundOverridden,
@@ -163,7 +184,13 @@ function Loaded({ manifest, saved }: { manifest: StoreManifest; saved: SavedDesi
     screenOnly,
     sceneLayouts,
     order,
-  } = state;
+    sceneDecorations,
+    sceneTransforms,
+  } = effectiveState;
+  const [artLibrary, setArtLibrary] = useState<ArtLibraryImage[]>([]);
+  useEffect(() => {
+    loadArtLibrary().then(setArtLibrary);
+  }, []);
   // Each setter names its field so a burst of edits to one control (a drag
   // on the gradient picker) collapses into a single undo step.
   const field =
@@ -206,6 +233,61 @@ function Loaded({ manifest, saved }: { manifest: StoreManifest; saved: SavedDesi
         },
       },
     }));
+  // The element editor's writes: `fieldKey` (e.g. "move:decoration:2") lets a
+  // continuous drag coalesce into one undo step, same idea as the controls
+  // above - see useHistory's COALESCE_MS.
+  const setSceneDecorations = (sceneId: string, list: Decoration[], fieldKey: string) =>
+    set(`decorations:${sceneId}:${fieldKey}`, (prev) => ({
+      ...prev,
+      sceneDecorations: { ...prev.sceneDecorations, [sceneId]: list },
+    }));
+  const setSceneTransform = (sceneId: string, t: SceneTransform, fieldKey: string) =>
+    set(`transform:${sceneId}:${fieldKey}`, (prev) => ({
+      ...prev,
+      sceneTransforms: { ...prev.sceneTransforms, [sceneId]: t },
+    }));
+  // "Revert scene"/"Revert all" in the lightbox toolbar: drop the editor's
+  // overrides so the scene (or every scene) renders the config's own layout
+  // and decorations again.
+  const revertScene = (sceneId: string) =>
+    set(`revert:${sceneId}`, (prev) => {
+      const sceneDecorations = { ...prev.sceneDecorations };
+      delete sceneDecorations[sceneId];
+      const sceneTransforms = { ...prev.sceneTransforms };
+      delete sceneTransforms[sceneId];
+      return { ...prev, sceneDecorations, sceneTransforms };
+    });
+  const revertAll = () =>
+    set("revert:all", (prev) => ({ ...prev, sceneDecorations: {}, sceneTransforms: {} }));
+
+  // History view: "Preview" loads a row into the strip without touching
+  // the saved design or the undo stack; "Restore" (here or from the
+  // banner) snapshots the current design server-side, then applies the
+  // restored one as a single undo step, same as any other edit.
+  const previewHistory = (entry: HistoryEntry) => {
+    loadHistoryDesign(entry.id).then((design_) => {
+      if (design_) {
+        setHistoryPreview({
+          id: entry.id,
+          timestamp: entry.timestamp,
+          saved: design_ as SavedDesign,
+        });
+      }
+    });
+  };
+  const cancelHistoryPreview = () => setHistoryPreview(null);
+  const restoreHistory = (id: string) => {
+    restoreHistoryEntry(id).then((restored) => {
+      if (restored) {
+        // The server already wrote this restore (and snapshotted what it
+        // replaced); the save effect below would otherwise write the exact
+        // same content right back a moment later, leaving a pointless extra
+        // "no-op" entry in the history it is trying to curate.
+        skipNextSave.current = true;
+        set("history-restore", () => designStateFromSaved(design, restored as SavedDesign));
+      }
+    });
+  };
 
   useEffect(() => {
     storeView(manifest.app.name, { platform: deviceType, device, locale, dark, view: stripView });
@@ -214,44 +296,50 @@ function Loaded({ manifest, saved }: { manifest: StoreManifest; saved: SavedDesi
   // Write the design to disk once it has sat still for a moment; a drag on
   // the gradient picker fires many changes a second. Skips the initial mount
   // so opening the studio never creates the file by itself. An empty frame
-  // means the config's custom bezel art, which has nothing to save.
+  // means the config's custom bezel art, which has nothing to save. This
+  // always saves `state`, never `effectiveState` - a history Preview must
+  // never get written to disk just because it sat on screen for a moment.
   const [saveError, setSaveError] = useState<string | null>(null);
   const mounted = useRef(false);
+  const skipNextSave = useRef(false);
   useEffect(() => {
     if (!mounted.current) {
       mounted.current = true;
       return;
     }
-    const timer = setTimeout(() => {
-      const chosen = Object.fromEntries(Object.entries(frames).filter(([, v]) => v));
+    if (historyPreview) return; // previewing: nothing here to persist
+    if (skipNextSave.current) {
+      skipNextSave.current = false;
+      return;
+    }
+    const timer = setTimeout(async () => {
+      const chosen = Object.fromEntries(Object.entries(state.frames).filter(([, v]) => v));
+      // Read-merge-write: the Settings view saves `art` straight to
+      // goldie.design.json between renders of this effect, and a plain
+      // overwrite here would wipe it out the next time anything else changes.
+      const onDisk = await loadDesign().catch(() => ({}) as SavedDesign);
       saveDesign({
-        background: backgroundOverridden ? background : undefined,
+        ...onDisk,
+        background: state.backgroundOverridden ? state.background : undefined,
         frames: Object.keys(chosen).length > 0 ? chosen : undefined,
-        fontFamily,
-        copy: Object.keys(copy).length > 0 ? copy : undefined,
-        order: order.length > 0 ? order : undefined,
-        template: template === CUSTOM_TEMPLATE ? undefined : template,
-        layout,
-        screenOnly,
-        sceneLayouts: Object.keys(sceneLayouts).length > 0 ? sceneLayouts : undefined,
+        fontFamily: state.fontFamily,
+        copy: Object.keys(state.copy).length > 0 ? state.copy : undefined,
+        order: state.order.length > 0 ? state.order : undefined,
+        template: state.template === CUSTOM_TEMPLATE ? undefined : state.template,
+        layout: state.layout,
+        screenOnly: state.screenOnly,
+        sceneLayouts: Object.keys(state.sceneLayouts).length > 0 ? state.sceneLayouts : undefined,
+        sceneDecorations:
+          Object.keys(state.sceneDecorations).length > 0 ? state.sceneDecorations : undefined,
+        sceneTransforms:
+          Object.keys(state.sceneTransforms).length > 0 ? state.sceneTransforms : undefined,
       }).then(
         () => setSaveError(null),
         (e: Error) => setSaveError(e.message),
       );
     }, SAVE_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [
-    background,
-    backgroundOverridden,
-    frames,
-    fontFamily,
-    copy,
-    order,
-    template,
-    layout,
-    screenOnly,
-    sceneLayouts,
-  ]);
+  }, [state, historyPreview]);
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark);
@@ -320,7 +408,31 @@ function Loaded({ manifest, saved }: { manifest: StoreManifest; saved: SavedDesi
 
       <div className="flex min-w-0 flex-1 flex-col">
         <main className="relative grid min-h-0 flex-1 place-items-center-safe overflow-auto p-10">
-          {stage === "promo" && manifest.promo ? (
+          {historyPreview ? (
+            <div className="sticky top-0 z-30 col-span-full mb-4 flex w-full max-w-[1400px] items-center justify-center gap-3 rounded-xl border border-ring bg-popover px-4 py-2 text-xs text-foreground shadow-md">
+              <span>
+                Previewing version from {timeAgo(historyPreview.timestamp)} ·{" "}
+                {new Date(historyPreview.timestamp).toLocaleString()}
+              </span>
+              <Button size="xs" onClick={() => restoreHistory(historyPreview.id)}>
+                Restore
+              </Button>
+              <Button size="xs" variant="ghost" onClick={cancelHistoryPreview}>
+                Cancel
+              </Button>
+            </div>
+          ) : null}
+          {stage === "settings" ? (
+            <SettingsView />
+          ) : stage === "history" ? (
+            <HistoryView
+              previewingId={historyPreview?.id ?? null}
+              onPreview={previewHistory}
+              onRestore={restoreHistory}
+            />
+          ) : stage === "plan" ? (
+            <PlanView />
+          ) : stage === "promo" && manifest.promo ? (
             <PromoView promo={manifest.promo} locale={locale} />
           ) : stage === "concepts" && manifest.concepts ? (
             <ConceptsView concepts={manifest.concepts} />
@@ -349,6 +461,14 @@ function Loaded({ manifest, saved }: { manifest: StoreManifest; saved: SavedDesi
                 sceneLayouts={sceneLayouts}
                 onSceneLayout={setSceneLayout}
                 view={stripView}
+                sceneDecorations={sceneDecorations}
+                onSceneDecorations={setSceneDecorations}
+                sceneTransforms={sceneTransforms}
+                onSceneTransform={setSceneTransform}
+                artLibrary={artLibrary}
+                history={{ canUndo, canRedo, undo, redo }}
+                onRevertScene={revertScene}
+                onRevertAll={revertAll}
               />
             </div>
           ) : spec ? (
@@ -394,9 +514,40 @@ type DesignState = {
   sceneLayouts: Record<string, string>;
   /** Screenshot scene ids as arranged by dragging tiles; empty means the config's order. */
   order: string[];
+  /** The element editor's live decorations per screenshot scene id; a scene absent here still shows its config decorations. */
+  sceneDecorations: Record<string, Decoration[]>;
+  /** The editor's moves of each scene's copy block and devices, per screenshot scene id. */
+  sceneTransforms: Record<string, SceneTransform>;
 };
 
 /** The saved variant per device when it is drawn for that device, else the config's. */
+/**
+ * Builds a full DesignState from a SavedDesign-shaped payload (a loaded
+ * goldie.design.json, or a version-history snapshot): the mount-time
+ * initializer and a history restore/preview both go through this, so the
+ * two never drift apart.
+ */
+function designStateFromSaved(design: Design, saved: SavedDesign): DesignState {
+  const knownLayout = (key: string | undefined) =>
+    key && design.layouts.some((l) => l.key === key) ? key : undefined;
+  return {
+    background: saved.background ?? design.theme.background,
+    // Whether a studio background choice is in force; unset, every scene's
+    // own `background` stands, as the CLI composes it.
+    backgroundOverridden: saved.background !== undefined,
+    frames: initialFrames(design, saved),
+    fontFamily: saved.fontFamily ?? design.theme.fontFamily,
+    copy: saved.copy ?? {},
+    layout: knownLayout(saved.layout) ?? design.layout,
+    template: initialTemplate(design, saved),
+    screenOnly: saved.screenOnly ?? design.screenOnly,
+    sceneLayouts: initialSceneLayouts(design, saved, knownLayout),
+    order: initialOrder(design, saved),
+    sceneDecorations: saved.sceneDecorations ?? {},
+    sceneTransforms: saved.sceneTransforms ?? {},
+  };
+}
+
 function initialFrames(design: Design, saved: SavedDesign): Record<string, string> {
   const known = (device: string, key: string | undefined) =>
     key && design.frameVariants.some((v) => v.key === key && v.device === device) ? key : undefined;

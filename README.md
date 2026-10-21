@@ -19,7 +19,10 @@ emulator, which works on macOS, Linux and Windows. On Linux, argent needs
 [a few extra packages](https://github.com/software-mansion/argent#linux-host-extra-prerequisites-for-android-emulators)
 for Android emulators. On a Linux or Windows machine keep only `pixel-10-pro`
 in `devices`; `goldie doctor` says so when an iOS device is configured on a
-host that cannot run it.
+host that cannot run it. The promo video (`goldie promo`) renders with
+[HyperFrames](https://github.com/heygen-com/hyperframes) and needs Node 22 or
+newer plus network access the first time; `goldie doctor` checks this only
+when the config has a `promo` block.
 
 Install the CLI:
 
@@ -62,6 +65,7 @@ goldie studio     Preview and tweak the assets in the browser
 goldie art        Generate the config's AI art layers
 goldie concepts   Compare art directions on draft boards
 goldie promo      Render the social promo video
+goldie discover   Scan the app for screens into goldie/discovery.json
 ```
 
 The output goes to `out/screenshots/<device>/<locale>/` and
@@ -141,6 +145,23 @@ renders the same result. The config also takes:
   ```
 - `decorations`: badges or images layered behind the device.
 
+Beyond the strip, the studio has three more views, always in its tab row:
+
+- **Settings** (gear icon): the OpenAI and fal.ai keys `goldie art` needs,
+  and the model/draft-model/style it generates with. A key typed here is
+  saved to a per-user credentials file (`~/.config/goldie/credentials.json`
+  by default, `src/credentials.ts`) - never into the repo - and ranks
+  between `goldie/.env` and the app's own `.env.local`/`.env` in the lookup
+  order `goldie art` and `goldie doctor` already use.
+- **History** (clock icon): every saved design change, snapshotted to
+  `goldie/.history/` (add it to `.gitignore`, it is local only) so a mistake
+  is always a click away - "Preview" loads a past version into the strip
+  without saving it, "Restore" commits it as one more undo-able step.
+- **Plan** (list-checks icon): which features and screens to build the
+  story around, from `goldie discover`'s scan of the app (`goldie/discovery.json`)
+  - pick them here, or leave it to "let goldie decide" and tell your coding
+  agent to build the plan.
+
 ## Emotional screenshots
 
 Feature lists don't convert; feelings do. Beyond the bezel and the headline,
@@ -165,7 +186,11 @@ real, pixel-true capture:
 - **Promo video** (`goldie promo`): the designed tiles animated for TikTok,
   Reels, X or YouTube in 9:16, 4:5 or 1:1, with kinetic headlines, springing
   devices, popping callouts, an outro card, an optional AI-animated intro clip
-  and a music bed (your file, or generated).
+  and a music bed (your file, or generated). Rendered by
+  [HyperFrames](https://github.com/heygen-com/hyperframes) (Apache-2.0,
+  Node >= 22): goldie writes the composition as layered PNGs plus a GSAP
+  timeline, which HyperFrames renders and which can also be hand-edited with
+  HyperFrames' own tools and re-rendered with `goldie promo --render-only`.
 - **Preview captions**: a caption per App Store preview segment, the text
   overlay App Review Guideline 2.3.4 allows.
 

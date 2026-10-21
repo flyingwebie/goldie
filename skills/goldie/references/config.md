@@ -216,6 +216,30 @@ panorama's second tile starts at `x: 1`.
   laurels: true, background: "#FFFFFF" }              // the plate keeps it legible over art
 ```
 
+## Editing in the studio
+
+The lightbox's element editor (click a decoration, the copy block or a device
+to select it, then drag, resize from a corner, rotate from the handle above
+it, nudge with the arrow keys, or use the inspector) never touches the
+config. It writes `goldie.design.json`, next to `sceneLayouts` and the rest of
+the Design panel's choices:
+
+- `sceneDecorations[sceneId]`: that scene's full decoration list, once the
+  editor has touched it - it replaces `scenes[].decorations` for that scene
+  the same way `sceneLayouts` replaces `theme.layout` (theme-level decorations
+  still apply on top, and are not editable here). Image `src` stays
+  config-relative, exactly as the config writes it.
+- `sceneTransforms[sceneId]`: `{ copy?, devices? }`, each an
+  `{ dx?, dy?, scale?, rotate? }` nudge (`dx`/`dy` as fractions of the tile)
+  applied after `compose()`, via `applyTransform` in `src/layouts.ts` - the
+  CLI calls the same function, so a dragged phone exports where it was
+  dropped.
+
+As with the rest of the Design panel: if the user wants an edit permanent,
+copy it into the config (`sceneDecorations[id]` into that scene's own
+`decorations`, `sceneTransforms[id]` folded into the layout's numbers or left
+as a one-off override) rather than leaving it only in `goldie.design.json`.
+
 ## Art and video
 
 The `art` block (generated art layers) is documented in `art.md`, the `promo`

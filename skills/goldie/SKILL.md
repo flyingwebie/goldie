@@ -137,7 +137,40 @@ adding `"ipad-13"` to `devices` and check the same screens on an "iPad Pro
 must use selectors that hold on every layout, so prefer `text:` and `id:`
 over coordinates.
 
-Choose:
+While exploring, note the exact visible text labels and accessibility ids you
+will need as selectors, and normalized coordinates for anything with no label
+(icon-only tab bars are the usual case). Also look for brand art the store
+page can use: a mascot kit, illustrations, the app icon, onboarding images.
+
+### Find the screens and features, then ask
+
+Run `goldie discover` to statically scan the app repo for screens (Expo
+Router, React Navigation, SwiftUI, Compose, Flutter routes, and any argent
+flows already in `.argent/flows`) into `goldie/discovery.json`. It works
+without `GOLDIE_CONFIG` too (`goldie discover --root <app-repo>`), for a
+repo with no config yet. Confirm the candidates that matter by walking to
+them on the simulator/emulator you already booted and capturing a quick
+thumbnail for each with the screenshot tool at a low scale, saved to
+`goldie/discovery/<id>.png` and set as that screen's `thumbnail` (a path
+relative to the goldie dir) in discovery.json. Then write 4-8 candidate
+**features** into `discovery.json`'s `features[]`: outcome-phrased ("Track
+every rescue end to end", not "has a list screen"), each linked to the
+screen ids that show it (`screenIds`). Re-running `goldie discover` is safe
+- merge mode (the default) keeps every feature, thumbnail and note you wrote.
+
+Then ask which features and screens to lead with, in story order:
+
+- In chat, a multi-select question (`AskUserQuestion` when available)
+  listing the features, then one for screens, each always offering a "let
+  goldie decide" option.
+- Or tell the user they can pick instead in the studio's Plan view
+  (http://localhost:4321, once Step 5 opens it).
+
+Read `goldie/plan.json` before choosing, when it exists: it is the answer.
+`decide: "goldie"` means choose yourself - the storytelling playbook below
+decides; otherwise its ordered `features` and `screens` are the story to tell.
+
+Choose, from the plan or the conversation:
 
 - **4 or 5 screenshot scenes.** Each is one screen that sells a feature: the
   main list, a detail view, search, a distinctive feature screen. Prefer
@@ -150,11 +183,6 @@ Choose:
   instead of an upload, so the Android video is rendered for the user to post
   themselves and has no duration bounds; when both stores are targeted, aim
   for the Apple window.
-
-While exploring, note the exact visible text labels and accessibility ids you
-will need as selectors, and normalized coordinates for anything with no label
-(icon-only tab bars are the usual case). Also look for brand art the store
-page can use: a mascot kit, illustrations, the app icon, onboarding images.
 
 ## Step 2.5: Write the brief and shape the story
 
@@ -203,8 +231,10 @@ art`). Without a key, the playbook still works with brand art from the repo,
 callouts, bubbles, ratings and bold type.
 
 Everything renders relative to the config file: output lands in
-`<app-repo>/goldie/out/`. Add `goldie/out/` to the app's `.gitignore`, and
-commit `goldie.config.ts` and the flows.
+`<app-repo>/goldie/out/`. Add `goldie/out/` and `goldie/.history/` (the
+studio's local version history, src/history.ts - never needed outside this
+machine) to the app's `.gitignore`, and commit `goldie.config.ts` and the
+flows.
 
 Because they are plain argent flows, each one is runnable on its own with
 `argent flow run store-01-home` from the app repo, which is the fastest way to
@@ -309,8 +339,10 @@ the next prompt can build on it.
 | A different layout for every tile, or one | `theme.layout`, or `scenes[].layout` for one tile | `frame`, `manifest` |
 | Two screens in one tile, or a two-tile panorama | `scenes[].layout: "duo"` / `"panorama-duo"` plus `secondScene`, or `"panorama"` | `frame`, `manifest` |
 | A badge, sticker or logo on the tiles | `theme.decorations` (all) or `scenes[].decorations` (one) | `frame`, `manifest` |
+| Move, resize or rotate a decoration, the copy block or a device by hand | the studio's lightbox element editor (click to select, drag); saves to `goldie.design.json`'s `sceneDecorations` / `sceneTransforms`, see `references/config.md` | nothing - the studio already shows it; `frame`/`manifest` only to confirm the CLI agrees |
 | Dark mode captures | `appearance: "dark"` (and text colors to match) | `capture`, `frame`, `manifest` |
 | Reorder, drop or add a screenshot | `scenes[]`; a new scene needs a new flow in `.argent/flows` | `capture` (new flows), `frame`, `manifest` |
+| Promote different features / screens | `goldie/plan.json` (or the studio's Plan view) - its ordered `features`/`screens` is the new story | re-author `scenes[]` and flows for the new picks, then `capture` (new flows), `frame`, `manifest` |
 | Show a different state on one screen | the scene's flow YAML | `capture`, `frame`, `manifest` |
 | Change the preview story or its pacing | preview `segments[]`, `holdSeconds`, flow `wait:` steps | `capture`, `preview`, `manifest` |
 | Another locale | `locales`, plus a `<locale>` key in every copy record | `capture`, `frame`, `preview`, `manifest` |
@@ -338,4 +370,15 @@ value into `theme.background`, `frame.variant`, `theme.fontFamily`,
 starts from what they see. The
 current on-disk values are also in `goldie/out/web/store.json` under `design`,
 which is the fastest way to confirm what the studio is showing right now.
+
+The lightbox's element editor (select, drag, resize, rotate, add or delete a
+decoration) writes the same file's `sceneDecorations` (a scene's full
+decoration list, replacing `scenes[].decorations` for it once touched) and
+`sceneTransforms` (moves of the copy block and each device, as `dx`/`dy`
+fractions of the tile, a `scale` and a `rotate` delta - see
+`applyTransform` in `src/layouts.ts`). Same rule: if the user wants an edit
+permanent, copy `sceneDecorations[id]` into that scene's `decorations` (image
+`src` is already config-relative) and fold `sceneTransforms[id]` into the
+layout's own numbers, or just leave it in `goldie.design.json` if the config
+is meant to stay generic and the override project-specific.
 

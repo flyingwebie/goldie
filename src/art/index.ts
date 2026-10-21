@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import type { ArtAsset, LoadedConfig } from "../config.ts";
+import { snapshotArtFile } from "../history.ts";
 import { pngInfo } from "../image.ts";
 import { resolveApiKey, tryResolveApiKey } from "./keys.ts";
 import {
@@ -206,6 +207,9 @@ export async function runArt(cfg: LoadedConfig, opts: RunArtOpts = {}): Promise<
       continue;
     }
     log(`generating ${p.asset.id}...`);
+    // Keep the previous render reachable even once a changed prompt or
+    // --force overwrites it.
+    await snapshotArtFile(artDir, p.asset.id, p.file);
     let bytes = await imageProvider.generate(p.req);
     await writeFile(p.file, bytes);
 

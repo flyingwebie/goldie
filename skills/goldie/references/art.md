@@ -12,9 +12,18 @@ image decorations).
 `OPENAI_API_KEY` for `provider: "openai"`, `FAL_KEY` for `provider: "fal"`
 (fal also powers background removal, animated clips and music, so a fal key
 is worth having either way). goldie reads them from the environment, then
-`goldie/.env` next to the config, then the app root's `.env.local` / `.env`.
+`goldie/.env` next to the config, then the user's own credentials file
+(`~/.config/goldie/credentials.json` by default; src/credentials.ts), then
+the app root's `.env.local` / `.env`.
 
-Set the user up in three moves, never asking them to paste a key into chat:
+The easiest path for most users is the studio's **Settings** view
+(http://localhost:4321, gear icon): paste a key there and it is saved to
+their own credentials file, never into the repo, with a status chip showing
+where each key currently comes from. Point them at it instead of a `.env`
+file whenever the studio is already open.
+
+Otherwise, set the user up in three moves, never asking them to paste a key
+into chat:
 
 1. Write `goldie/.env.example` with both variable names, empty, and a comment
    saying where each key comes from (OpenAI: platform.openai.com/api-keys,

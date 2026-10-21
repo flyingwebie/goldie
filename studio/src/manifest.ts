@@ -1,5 +1,11 @@
 /** Mirrors the StoreManifest that `goldie manifest` writes to out/store.json. */
 
+// SceneTransform/ElementTransform are pure geometry (no node imports), so the
+// studio imports them straight from src/ instead of duplicating the type.
+import type { SceneTransform } from "../../src/layouts.ts";
+
+export type { ElementTransform, SceneTransform } from "../../src/layouts.ts";
+
 /** Mirrors EmphasisStyle in src/config.ts: how *stressed* headline words stand out. */
 export type EmphasisStyle = "color" | "highlight" | "underline" | "circle" | "script";
 
@@ -52,6 +58,13 @@ export type Decoration =
   | {
       kind: "image";
       src: string;
+      /**
+       * The config-relative path `src` was copied from, before the manifest
+       * rewrote it to a browser url. The editor saves this back to
+       * goldie.design.json instead of the url, so the CLI resolves the same
+       * file the config does.
+       */
+      configSrc?: string;
       x: number;
       y: number;
       width: number;
@@ -270,6 +283,17 @@ export type SavedDesign = {
   screenOnly?: boolean;
   /** Layout overrides per screenshot scene id. */
   sceneLayouts?: Record<string, string>;
+  /**
+   * Decorations edited in the element editor, per screenshot scene id. Once
+   * the editor touches a scene, this list replaces the config's
+   * `scenes[].decorations` for it, exactly as the CLI's applyDesign does.
+   * Image `src` is saved config-relative (see Decoration.configSrc above).
+   */
+  sceneDecorations?: Record<string, Decoration[]>;
+  /** The editor's moves of each scene's copy block and devices, per screenshot scene id. */
+  sceneTransforms?: Record<string, SceneTransform>;
+  /** AI art choices made in the studio's Settings view; each overrides the config's `art` field. */
+  art?: { provider?: "openai" | "fal"; model?: string; draftModel?: string; style?: string };
 };
 
 export type SceneCopy = {
@@ -285,6 +309,20 @@ export async function loadDesign(): Promise<SavedDesign> {
     return parsed && typeof parsed === "object" ? (parsed as SavedDesign) : {};
   } catch {
     return {}; // a static build has no API; the config's values stand
+  }
+}
+
+export type ArtLibraryImage = { src: string; url: string };
+
+/** Every image the config references or keeps in its art dir, for the editor's Add > Image picker. */
+export async function loadArtLibrary(): Promise<ArtLibraryImage[]> {
+  try {
+    const res = await fetch("/api/art-library", { cache: "no-store" });
+    if (!res.ok) return [];
+    const parsed = await res.json();
+    return Array.isArray(parsed?.images) ? (parsed.images as ArtLibraryImage[]) : [];
+  } catch {
+    return []; // a static build (no API) or the dev server not yet restarted; Add > Image is just empty
   }
 }
 

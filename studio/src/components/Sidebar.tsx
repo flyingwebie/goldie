@@ -1,11 +1,14 @@
 import {
   ClapperboardIcon,
   GalleryHorizontalIcon,
+  HistoryIcon,
   ImagesIcon,
   LayoutGridIcon,
+  ListChecksIcon,
   type LucideIcon,
   MoonIcon,
   PlayIcon,
+  SettingsIcon,
   SmartphoneIcon,
   SunIcon,
   TabletIcon,
@@ -38,8 +41,12 @@ const DEVICE_TYPES: Array<{ key: DeviceType; icon: LucideIcon; label: string }> 
   { key: "android", icon: PlayIcon, label: "Android" },
 ];
 
-/** What the stage shows: the composited strip, the promo video, or the concept boards. */
-export type Stage = "strip" | "promo" | "concepts";
+/**
+ * What the stage shows: the composited strip, the promo video, the concept
+ * boards, or one of the always-available utility views (Settings, History,
+ * Plan).
+ */
+export type Stage = "strip" | "promo" | "concepts" | "settings" | "history" | "plan";
 
 /**
  * The left rail: the goldie wordmark with the view (one paged row or a
@@ -138,31 +145,43 @@ export function Sidebar({
         </div>
       </header>
 
-      {hasPromo || hasConcepts ? (
-        <div className="flex shrink-0 gap-1 px-5 pb-1">
+      <div className="flex shrink-0 flex-wrap gap-1 px-5 pb-1">
+        <StageTab label="Screenshots" active={stage === "strip"} onClick={() => onStage("strip")} />
+        {hasPromo ? (
           <StageTab
-            label="Screenshots"
-            active={stage === "strip"}
-            onClick={() => onStage("strip")}
+            label="Promo"
+            icon={ClapperboardIcon}
+            active={stage === "promo"}
+            onClick={() => onStage("promo")}
           />
-          {hasPromo ? (
-            <StageTab
-              label="Promo"
-              icon={ClapperboardIcon}
-              active={stage === "promo"}
-              onClick={() => onStage("promo")}
-            />
-          ) : null}
-          {hasConcepts ? (
-            <StageTab
-              label="Concepts"
-              icon={ImagesIcon}
-              active={stage === "concepts"}
-              onClick={() => onStage("concepts")}
-            />
-          ) : null}
-        </div>
-      ) : null}
+        ) : null}
+        {hasConcepts ? (
+          <StageTab
+            label="Concepts"
+            icon={ImagesIcon}
+            active={stage === "concepts"}
+            onClick={() => onStage("concepts")}
+          />
+        ) : null}
+        <StageTab
+          label="Plan"
+          icon={ListChecksIcon}
+          active={stage === "plan"}
+          onClick={() => onStage("plan")}
+        />
+        <StageTab
+          label="History"
+          icon={HistoryIcon}
+          active={stage === "history"}
+          onClick={() => onStage("history")}
+        />
+        <StageTab
+          label="Settings"
+          icon={SettingsIcon}
+          active={stage === "settings"}
+          onClick={() => onStage("settings")}
+        />
+      </div>
 
       <div className="sidebar-scroll flex-1 overflow-y-auto">
         {/* Every tab always shows, so an iPhone-only setup still surfaces that
