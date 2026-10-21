@@ -56,7 +56,12 @@ export function openaiProvider(apiKey: string): ImageProvider {
         // input_fidelity "high"; gpt-image-2.x does not take the parameter.
         if (model.startsWith("gpt-image-1")) form.set("input_fidelity", "high");
         for (const [i, ref] of req.references.entries()) {
-          form.append("image[]", new Blob([ref], { type: "image/png" }), `reference-${i}.png`);
+          // Buffer's underlying ArrayBufferLike may be a SharedArrayBuffer,
+          // which BlobPart's stricter typed-array generic rejects; a plain
+          // Uint8Array always allocates (and copies into) a real ArrayBuffer.
+          const bytes = new Uint8Array(ref.byteLength);
+          bytes.set(ref);
+          form.append("image[]", new Blob([bytes], { type: "image/png" }), `reference-${i}.png`);
         }
         res = await fetch("https://api.openai.com/v1/images/edits", {
           method: "POST",

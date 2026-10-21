@@ -1,6 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { FRAMES } from "./frame.ts";
-import { compose, LAYOUT_KEYS, LAYOUTS, needsSecondCapture, resolveScenes } from "./layouts.ts";
+import {
+  applyTransform,
+  compose,
+  LAYOUT_KEYS,
+  LAYOUTS,
+  needsSecondCapture,
+  resolveScenes,
+  sceneTransform,
+} from "./layouts.ts";
 import { DEVICES } from "./specs.ts";
 
 const tile = { width: 1320, height: 2868 };
@@ -168,5 +176,54 @@ describe("resolveScenes", () => {
     });
     expect(r.map((x) => x.secondScene)).toEqual(["b", "a", "a"]);
     expect(resolveScenes([{ id: "only" }], { template: ["duo"] })[0]!.secondScene).toBeUndefined();
+  });
+});
+
+describe("applyTransform", () => {
+  test("no transform returns the composition untouched", () => {
+    const c = compose(LAYOUTS.hero, tile, theme);
+    expect(applyTransform(c, undefined, tile)).toBe(c);
+  });
+
+  test("moves, scales and rotates a device about its centre", () => {
+    const c = compose(LAYOUTS.hero, tile, theme);
+    const d = c.devices[0]!;
+    const t = applyTransform(c, { devices: [{ dx: 0.1, dy: -0.05, scale: 0.5, rotate: 7 }] }, tile);
+    const m = t.devices[0]!;
+    expect(m.frame.left + m.frame.width / 2).toBeCloseTo(d.frame.left + d.frame.width / 2 + 132, 6);
+    expect(m.frame.top + m.frame.height / 2).toBeCloseTo(
+      d.frame.top + d.frame.height / 2 - 143.4,
+      6,
+    );
+    expect(m.frame.width).toBeCloseTo(d.frame.width / 2, 6);
+    expect(m.screen.radius).toBeCloseTo(d.screen.radius / 2, 6);
+    expect(m.rotate).toBe(d.rotate + 7);
+  });
+
+  test("moves and scales the copy block", () => {
+    const c = compose(LAYOUTS.classic, tile, theme);
+    const t = applyTransform(c, { copy: { dy: 0.1, scale: 1.2 } }, tile);
+    expect(t.copy!.y).toBeCloseTo(c.copy!.y + 286.8, 6);
+    expect(t.copy!.typeWidth).toBeCloseTo(c.copy!.typeWidth * 1.2, 6);
+  });
+});
+
+describe("copy alignment", () => {
+  test("re-anchors the copy at the block's left, centre or right edge", () => {
+    const c = compose(LAYOUTS.classic, tile, theme);
+    const { left, width } = c.copy!.box;
+    const at = (align: "left" | "center" | "right") =>
+      applyTransform(c, { copy: { align } }, tile).copy!;
+    expect(at("left")).toMatchObject({ align: "left", x: left });
+    expect(at("right")).toMatchObject({ align: "right", x: left + width });
+    expect(at("center").x).toBeCloseTo(c.copy!.x, 6);
+  });
+
+  test("a studio alignment wins over the config's", () => {
+    expect(sceneTransform({ align: "left" }, undefined)).toEqual({ copy: { align: "left" } });
+    expect(sceneTransform({ align: "left" }, { copy: { align: "right", dy: 0.1 } })).toEqual({
+      copy: { align: "right", dy: 0.1 },
+    });
+    expect(sceneTransform({}, undefined)).toBeUndefined();
   });
 });

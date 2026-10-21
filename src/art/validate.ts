@@ -30,6 +30,9 @@ export function validateArt(cfg: { root: string; art?: ArtConfig }): void {
     if (seen.has(asset.id)) throw new Error(`Duplicate art asset id "${asset.id}".`);
     seen.add(asset.id);
 
+    if (asset.provider && asset.provider !== "openai" && asset.provider !== "fal") {
+      throw new Error(`art asset "${asset.id}" has an unknown provider "${asset.provider}".`);
+    }
     if (!VALID_KINDS.has(asset.kind)) {
       throw new Error(
         `art asset "${asset.id}" has an unknown kind "${asset.kind}". ` +

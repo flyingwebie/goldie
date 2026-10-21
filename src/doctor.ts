@@ -5,6 +5,7 @@ import { tryResolveApiKey } from "./art/keys.ts";
 import { flowPath, type LoadedConfig } from "./config.ts";
 import * as device from "./device.ts";
 import { exec } from "./exec.ts";
+import { HYPERFRAMES_VERSION, hyperframesDoctor } from "./promo/render.ts";
 import { DEVICES } from "./specs.ts";
 
 const FFMPEG_INSTALL =
@@ -170,7 +171,10 @@ export async function doctor(cfg: LoadedConfig): Promise<boolean> {
   });
 
   for (const scene of cfg.scenes) {
-    const flows = scene.kind === "preview" ? scene.segments.map((s) => s.flow) : [scene.flow];
+    const flows =
+      scene.kind === "preview"
+        ? scene.segments.map((s) => s.flow)
+        : [scene.flow, ...Object.values(scene.flows ?? {}).filter((f): f is string => Boolean(f))];
     for (const f of flows) {
       const path = flowPath(cfg, f);
       const exists = existsSync(path);
@@ -214,8 +218,42 @@ export async function doctor(cfg: LoadedConfig): Promise<boolean> {
         detail: found
           ? "found (value not shown)"
           : `missing, needed for ${provider === "fal" && provider !== cfg.art.provider ? "cutouts, clips or music" : "goldie art"}`,
-        fix: `Add ${name}=<your key> to ${where}`,
+        fix: `Add it in the studio's Settings, or add ${name}=<your key> to ${where}`,
         warnOnly: !required,
+      });
+    }
+  }
+
+  // The promo video renders with HyperFrames (npx hyperframes@<pinned>),
+  // which needs Node >= 22 - newer than goldie's own >= 20.12 floor, so this
+  // only gates the `promo` command, not every other engine.
+  if (cfg.promo) {
+    const nodeVersion = (await exec("node", ["-v"], { quiet: true })).stdout.trim();
+    const nodeMajor = Number(nodeVersion.replace(/^v/, "").split(".")[0]);
+    checks.push({
+      name: "node (promo)",
+      ok: Number.isFinite(nodeMajor) && nodeMajor >= 22,
+      detail: nodeVersion || "node not found on PATH",
+      fix: "HyperFrames needs Node 22 or newer on PATH: nvm install 22 && nvm use 22",
+    });
+    const hf = await hyperframesDoctor().catch(
+      (err) =>
+        ({
+          ok: false,
+          checks: [{ name: "hyperframes doctor", ok: false, detail: String(err) }],
+        }) as const,
+    );
+    for (const c of hf.checks) {
+      checks.push({
+        name: `hyperframes: ${c.name}`,
+        ok: c.ok,
+        detail: c.detail,
+        fix:
+          c.name === "Chrome"
+            ? `npx hyperframes@${HYPERFRAMES_VERSION} browser ensure`
+            : c.name === "FFmpeg" || c.name === "FFprobe"
+              ? FFMPEG_INSTALL
+              : "Reinstall Node 22+, then re-run goldie doctor",
       });
     }
   }

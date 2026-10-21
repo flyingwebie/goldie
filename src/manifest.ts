@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import {
   copyFile,
   lstat,
@@ -110,6 +111,8 @@ export type StoreManifest = {
       headline: Record<string, string>;
       subhead?: Record<string, string>;
       kicker?: Record<string, string>;
+      /** The config's copy alignment for this scene, overriding its layout's. */
+      align?: "left" | "center" | "right";
       /** The scene's own CSS background, overriding the theme's. */
       background?: string;
       /** Url under out/web, or "none". */
@@ -117,6 +120,10 @@ export type StoreManifest = {
       layout?: string;
       secondScene?: string;
       decorations?: Decoration[];
+      /** Devices the scene is not shot on. */
+      skipDevices?: string[];
+      /** Per-device decoration lists, replacing `decorations` on that device. */
+      byDevice?: Record<string, { decorations?: Decoration[] }>;
     }>;
     preview: {
       sceneId: string;
@@ -234,6 +241,9 @@ export async function writeManifest(cfg: LoadedConfig): Promise<string> {
   const webAsset = async (src: string | undefined): Promise<string | undefined> => {
     if (!src || src === "none") return src;
     const abs = resolve(cfg.root, src);
+    // Art `goldie art` has not generated yet: keep a url (the studio shows
+    // nothing there) rather than failing the whole manifest.
+    if (!existsSync(abs)) return `decor/pending-${basename(abs)}`;
     let url = copied.get(abs);
     if (!url) {
       url = `decor/${copied.size}-${basename(abs)}`;
@@ -242,10 +252,14 @@ export async function writeManifest(cfg: LoadedConfig): Promise<string> {
     }
     return url;
   };
+  // Image decorations keep their config-relative src alongside the browser
+  // url, under `configSrc`: the editor needs it to save a moved or newly
+  // added image layer back to goldie.design.json in the same relative form
+  // the config itself uses, rather than the out/web url it renders with.
   const webDecorations = async (list: Decoration[] | undefined) =>
     Promise.all(
       (list ?? []).map(async (d) =>
-        d.kind === "image" ? { ...d, src: (await webAsset(d.src))! } : d,
+        d.kind === "image" ? { ...d, configSrc: d.src, src: (await webAsset(d.src))! } : d,
       ),
     );
   const scenes: StoreManifest["design"]["scenes"] = [];
@@ -255,11 +269,25 @@ export async function writeManifest(cfg: LoadedConfig): Promise<string> {
       headline: scene.headline,
       ...(scene.subhead ? { subhead: scene.subhead } : {}),
       ...(scene.kicker ? { kicker: scene.kicker } : {}),
+      ...(scene.align ? { align: scene.align } : {}),
       ...(scene.background ? { background: scene.background } : {}),
       ...(scene.backgroundImage ? { backgroundImage: await webAsset(scene.backgroundImage) } : {}),
       ...(scene.layout ? { layout: scene.layout } : {}),
       ...(scene.secondScene ? { secondScene: scene.secondScene } : {}),
       ...(scene.decorations ? { decorations: await webDecorations(scene.decorations) } : {}),
+      ...(scene.skipDevices?.length ? { skipDevices: scene.skipDevices } : {}),
+      ...(scene.byDevice
+        ? {
+            byDevice: Object.fromEntries(
+              await Promise.all(
+                Object.entries(scene.byDevice).map(async ([device, o]) => [
+                  device,
+                  o?.decorations ? { decorations: await webDecorations(o.decorations) } : {},
+                ]),
+              ),
+            ),
+          }
+        : {}),
     });
   }
   const theme: Theme = {

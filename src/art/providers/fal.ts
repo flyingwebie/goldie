@@ -1,4 +1,4 @@
-import type { Aspect, ImageProvider } from "./types.ts";
+import type { Aspect, ImageProvider, ImageRequest } from "./types.ts";
 
 const FINAL_MODEL = "fal-ai/nano-banana-pro";
 const FINAL_EDIT_MODEL = "fal-ai/nano-banana-pro/edit";
@@ -10,9 +10,32 @@ const BIREFNET_MODEL = "fal-ai/birefnet";
 export const FAL_COST_USD = {
   "nano-banana-pro": 0.15,
   "seedream-v4": 0.03,
+  "seedream-v4.5": 0.04,
+  "recraft-v3": 0.04,
+  "flux-pro-v1.1-ultra": 0.06,
   birefnet: 0.01,
   "kling-video-pro-5s": 0.35,
   "cassetteai-per-minute": 0.02,
+};
+
+/**
+ * Which request shape a model takes, verified against its fal OpenAPI
+ * schema (`https://fal.ai/api/openapi/queue/openapi.json?endpoint_id=<id>`).
+ * A model id absent here falls back to the quality-based default below, so
+ * every existing call keeps working unchanged; `art/models.ts` only lists
+ * ids this map (or that default) can actually drive.
+ */
+type FalFamily = "nano-banana" | "seedream" | "recraft" | "flux-pro";
+
+const FAL_MODEL_FAMILY: Record<string, FalFamily> = {
+  [FINAL_MODEL]: "nano-banana",
+  [FINAL_EDIT_MODEL]: "nano-banana",
+  [DRAFT_MODEL]: "seedream",
+  [DRAFT_EDIT_MODEL]: "seedream",
+  "fal-ai/bytedance/seedream/v4.5/text-to-image": "seedream",
+  "fal-ai/bytedance/seedream/v4.5/edit": "seedream",
+  "fal-ai/recraft-v3": "recraft",
+  "fal-ai/flux-pro/v1.1-ultra": "flux-pro",
 };
 
 const NANO_BANANA_ASPECT: Record<Aspect, string> = {
@@ -116,48 +139,132 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** The family an explicit `req.model` drives, falling back to the quality-based default. */
+function familyFor(req: ImageRequest): FalFamily {
+  const explicit = req.model ? FAL_MODEL_FAMILY[req.model] : undefined;
+  return explicit ?? (req.quality === "final" ? "nano-banana" : "seedream");
+}
+
+/**
+ * A chosen model's text-to-image or edit endpoint, whichever the request
+ * needs: an edit endpoint requires reference images and a text-to-image one
+ * ignores them, so the picked model (from Settings) is mapped to the variant
+ * that matches whether this asset has references. Models with one endpoint
+ * pass through.
+ */
+export function variantFor(model: string, hasRefs: boolean): string {
+  const known = (id: string) => id in FAL_MODEL_FAMILY;
+  if (hasRefs) {
+    if (model.endsWith("/edit")) return model;
+    const swapped = model.replace(/\/text-to-image$/, "/edit");
+    if (swapped !== model && known(swapped)) return swapped;
+    if (known(`${model}/edit`)) return `${model}/edit`;
+    return model;
+  }
+  if (!model.endsWith("/edit")) return model;
+  const base = model.slice(0, -"/edit".length);
+  if (known(`${base}/text-to-image`)) return `${base}/text-to-image`;
+  if (known(base)) return base;
+  return model;
+}
+
+function defaultModelFor(family: FalFamily, hasRefs: boolean): string {
+  switch (family) {
+    case "nano-banana":
+      return hasRefs ? FINAL_EDIT_MODEL : FINAL_MODEL;
+    case "seedream":
+      return hasRefs ? DRAFT_EDIT_MODEL : DRAFT_MODEL;
+    case "recraft":
+      return "fal-ai/recraft-v3";
+    case "flux-pro":
+      return "fal-ai/flux-pro/v1.1-ultra";
+  }
+}
+
+function costFor(family: FalFamily, model: string | undefined): number {
+  switch (family) {
+    case "nano-banana":
+      return FAL_COST_USD["nano-banana-pro"];
+    case "seedream":
+      return model?.includes("v4.5") ? FAL_COST_USD["seedream-v4.5"] : FAL_COST_USD["seedream-v4"];
+    case "recraft":
+      return FAL_COST_USD["recraft-v3"];
+    case "flux-pro":
+      return FAL_COST_USD["flux-pro-v1.1-ultra"];
+  }
+}
+
+/** The request body each family's endpoint expects, per its fal OpenAPI schema. */
+/**
+ * Nano Banana Pro renders 1K by default. A final asset asks for 2K (same
+ * price), and a strip backdrop, which spans every tile of the store page,
+ * for 4K (twice the price), so neither turns soft when cover-fitted.
+ */
+export function nanoBananaResolution(req: Pick<ImageRequest, "quality" | "aspect">): string {
+  if (req.quality !== "final") return "1K";
+  return req.aspect === "strip" ? "4K" : "2K";
+}
+
+function inputFor(family: FalFamily, req: ImageRequest, hasRefs: boolean): Record<string, unknown> {
+  switch (family) {
+    case "nano-banana": {
+      const input: Record<string, unknown> = {
+        prompt: req.prompt,
+        aspect_ratio: NANO_BANANA_ASPECT[req.aspect],
+        output_format: "png",
+        resolution: nanoBananaResolution(req),
+      };
+      if (hasRefs) input.image_urls = req.references.map((r) => dataUri(r));
+      return input;
+    }
+    case "seedream": {
+      const input: Record<string, unknown> = {
+        prompt: req.prompt,
+        image_size: SEEDREAM_ASPECT[req.aspect],
+      };
+      if (hasRefs) input.image_urls = req.references.map((r) => dataUri(r));
+      return input;
+    }
+    case "recraft":
+      // No reference-image input; ArtModel.supportsReferenceImages is false.
+      return { prompt: req.prompt, image_size: SEEDREAM_ASPECT[req.aspect] };
+    case "flux-pro": {
+      const input: Record<string, unknown> = {
+        prompt: req.prompt,
+        aspect_ratio: NANO_BANANA_ASPECT[req.aspect],
+        output_format: "png",
+      };
+      // flux-pro/v1.1-ultra takes one reference image (image_url), not an array.
+      if (hasRefs) input.image_url = dataUri(req.references[0]!);
+      return input;
+    }
+  }
+}
+
 export function falProvider(apiKey: string): ImageProvider {
   return {
     estimateUsd(req) {
-      const base =
-        req.quality === "final" ? FAL_COST_USD["nano-banana-pro"] : FAL_COST_USD["seedream-v4"];
+      const family = familyFor(req);
+      const fourK = family === "nano-banana" && nanoBananaResolution(req) === "4K";
+      const base = costFor(family, req.model) * (fourK ? 2 : 1);
       return req.transparent ? base + FAL_COST_USD.birefnet : base;
     },
 
     async generate(req) {
       const hasRefs = req.references.length > 0;
-      let raw: Buffer;
+      const family = familyFor(req);
+      const model = req.model ? variantFor(req.model, hasRefs) : defaultModelFor(family, hasRefs);
+      const input = inputFor(family, req, hasRefs);
 
-      if (req.quality === "final") {
-        const model = req.model ?? (hasRefs ? FINAL_EDIT_MODEL : FINAL_MODEL);
-        const input: Record<string, unknown> = {
-          prompt: req.prompt,
-          aspect_ratio: NANO_BANANA_ASPECT[req.aspect],
-          output_format: "png",
-        };
-        if (hasRefs) input.image_urls = req.references.map((r) => dataUri(r));
-        const out = await falQueueSubmit(apiKey, model, input);
-        const url = out?.images?.[0]?.url;
-        if (!url)
-          throw new Error(`fal ${model} response had no images[0].url: ${JSON.stringify(out)}`);
-        raw = await downloadUrl(url);
-      } else {
-        const model = req.model ?? (hasRefs ? DRAFT_EDIT_MODEL : DRAFT_MODEL);
-        const input: Record<string, unknown> = {
-          prompt: req.prompt,
-          image_size: SEEDREAM_ASPECT[req.aspect],
-        };
-        if (hasRefs) input.image_urls = req.references.map((r) => dataUri(r));
-        const out = await falQueueSubmit(apiKey, model, input);
-        const url = out?.images?.[0]?.url;
-        if (!url)
-          throw new Error(`fal ${model} response had no images[0].url: ${JSON.stringify(out)}`);
-        raw = await downloadUrl(url);
-      }
+      const out = await falQueueSubmit(apiKey, model, input);
+      const url = out?.images?.[0]?.url;
+      if (!url)
+        throw new Error(`fal ${model} response had no images[0].url: ${JSON.stringify(out)}`);
+      const raw = await downloadUrl(url);
 
-      // Neither nano-banana-pro nor seedream can render a true alpha
-      // background; a transparent asset is generated on a plain backdrop
-      // (see the style's transparentHint) and then cut out.
+      // None of these models can render a true alpha background; a
+      // transparent asset is generated on a plain backdrop (see the
+      // style's transparentHint) and then cut out.
       if (req.transparent) return removeBackground(apiKey, raw);
       return raw;
     },

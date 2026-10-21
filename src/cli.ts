@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runConcepts } from "./art/concepts.ts";
 import { ART_STYLE_KEYS, ensureMusic, runArt } from "./art/index.ts";
@@ -18,6 +18,7 @@ import {
   validateLayouts,
 } from "./config.ts";
 import * as device from "./device.ts";
+import { runDiscover } from "./discover.ts";
 import { doctor } from "./doctor.ts";
 import { FONT_KEYS, fontStack } from "./fonts.ts";
 import { LAYOUT_KEYS, type LayoutKey, TEMPLATE_KEYS } from "./layouts.ts";
@@ -32,7 +33,7 @@ const USAGE = `
 goldie - App Store screenshots and previews, driven by argent
 
   goldie doctor     Check the toolchain, simulators, flags and flows
-  goldie capture    Replay every scene flow and save raw captures
+  goldie capture    Replay every scene flow and save raw captures (--scene <id,id> to recapture only those, merged into the existing manifest)
   goldie frame      Composite raw screenshots into framed, captioned PNGs
   goldie preview    Join the raw clips into the preview video (App Store upload; YouTube for Play)
   goldie verify     Check finished assets against the store spec tables
@@ -43,7 +44,8 @@ goldie - App Store screenshots and previews, driven by argent
 Emotional screenshots
   goldie art        Generate the config's AI art layers (cached; --only <ids>, --force, --draft, --dry-run, --yes)
   goldie concepts   Draft the art in several styles and render comparison boards (--styles a,b,c)
-  goldie promo      Render the social promo video (--format 9:16,4:5,1:1; default the config's)
+  goldie promo      Render the social promo video with HyperFrames (--format 9:16,4:5,1:1,16:9; default the config's; --render-only to skip regenerating the composition)
+  goldie discover   Scan the app for screens into goldie/discovery.json (--root <dir> to run without a config; --fresh to discard agent-written features)
   goldie version    Print the installed goldie version (-v, --version)
 
 Options
@@ -79,6 +81,13 @@ async function main() {
 
   if (command === "version" || command === "-v" || command === "--version") {
     console.log(packageVersion());
+    return 0;
+  }
+
+  // Runs without a config - --root stands in for appRoot, so a repo with no
+  // goldie.config.ts yet can still be scanned.
+  if (command === "discover" && opt("root")) {
+    await runDiscoverCommand(resolve(process.cwd(), opt("root")!), argv);
     return 0;
   }
 
@@ -120,7 +129,7 @@ async function main() {
       return (await doctor(cfg)) ? 0 : 1;
 
     case "capture":
-      await runCapture(cfg, devices, locales);
+      await runCapture(cfg, devices, locales, list(opt("scene")));
       return 0;
 
     case "frame":
@@ -197,11 +206,17 @@ async function main() {
               music && !cfg.promo?.audio
                 ? (seconds) => ensureMusic(cfg, music.prompt, seconds, music.model)
                 : undefined,
+            renderOnly: argv.includes("--render-only"),
           });
           console.log(`promo  ${file}`);
         }
       }
       await writeManifest(cfg);
+      return 0;
+    }
+
+    case "discover": {
+      await runDiscoverCommand(cfg.appRoot, argv, cfg.root, cfg.flowsDir, cfg.store.name);
       return 0;
     }
 
@@ -232,11 +247,18 @@ function packageVersion(): string {
   return JSON.parse(readFileSync(pkg, "utf8")).version;
 }
 
-async function runCapture(cfg: LoadedConfig, devices: DeviceKey[], locales: string[]) {
+async function runCapture(
+  cfg: LoadedConfig,
+  devices: DeviceKey[],
+  locales: string[],
+  onlyScenes?: string[],
+) {
   for (const d of devices) {
     const udid = await device.resolveUdid(d);
     try {
-      for (const locale of captureLocales(cfg, d, locales)) await capture(cfg, d, locale);
+      for (const locale of captureLocales(cfg, d, locales)) {
+        await capture(cfg, d, locale, { onlyScenes });
+      }
     } finally {
       // Leave the device as it was found; a pinned status bar is sticky.
       await device.clearStatusBar(d, udid);
@@ -248,6 +270,37 @@ async function verifyAll(cfg: LoadedConfig, devices: DeviceKey[], locales: strin
   let ok = true;
   for (const d of devices) for (const l of locales) ok = (await verify(cfg, d, l)) && ok;
   return ok;
+}
+
+/**
+ * Runs `goldie discover` and prints a short summary. `goldieDir` is the
+ * directory discovery.json is written into: `cfg.root` on a config-driven
+ * run, or `<appRoot>/goldie` for a bare `--root` scan with no config.
+ */
+async function runDiscoverCommand(
+  appRoot: string,
+  argv: string[],
+  goldieDir: string = join(appRoot, "goldie"),
+  flowsDir?: string,
+  appName?: string,
+) {
+  const { file, discovery } = await runDiscover(goldieDir, {
+    appRoot,
+    appName,
+    flowsDir,
+    fresh: argv.includes("--fresh"),
+    log: (line) => console.log(line),
+  });
+  const bySource = new Map<string, number>();
+  for (const s of discovery.screens) bySource.set(s.source, (bySource.get(s.source) ?? 0) + 1);
+  const summary = [...bySource.entries()].map(([k, v]) => `${v} ${k}`).join(", ");
+  console.log(`\nwrote ${file}`);
+  console.log(`${discovery.screens.length} screens (${summary || "none"})`);
+  if (discovery.features.length === 0) {
+    console.log(
+      "No features yet - write 4-8 candidate features into discovery.json, or ask the user in chat.",
+    );
+  }
 }
 
 main()

@@ -1,5 +1,11 @@
 /** Mirrors the StoreManifest that `goldie manifest` writes to out/store.json. */
 
+// SceneTransform/ElementTransform are pure geometry (no node imports), so the
+// studio imports them straight from src/ instead of duplicating the type.
+import type { SceneTransform } from "../../src/layouts.ts";
+
+export type { ElementTransform, SceneTransform } from "../../src/layouts.ts";
+
 /** Mirrors EmphasisStyle in src/config.ts: how *stressed* headline words stand out. */
 export type EmphasisStyle = "color" | "highlight" | "underline" | "circle" | "script";
 
@@ -52,6 +58,13 @@ export type Decoration =
   | {
       kind: "image";
       src: string;
+      /**
+       * The config-relative path `src` was copied from, before the manifest
+       * rewrote it to a browser url. The editor saves this back to
+       * goldie.design.json instead of the url, so the CLI resolves the same
+       * file the config does.
+       */
+      configSrc?: string;
       x: number;
       y: number;
       width: number;
@@ -135,6 +148,8 @@ export type DesignScene = {
   subhead?: Record<string, string>;
   /** A short handwritten line above the headline, per locale. */
   kicker?: Record<string, string>;
+  /** The config's copy alignment for this scene, overriding its layout's. */
+  align?: "left" | "center" | "right";
   /** The scene's own CSS background, overriding the theme's. */
   background?: string;
   /** Url under out/web, or "none" to clear the theme's backgroundImage. */
@@ -142,6 +157,10 @@ export type DesignScene = {
   layout?: string;
   secondScene?: string;
   decorations?: Decoration[];
+  /** Devices the scene is not shot on. */
+  skipDevices?: string[];
+  /** Per-device decoration lists, replacing `decorations` on that device. */
+  byDevice?: Record<string, { decorations?: Decoration[] }>;
 };
 
 export type BundledFont = {
@@ -238,15 +257,27 @@ export async function loadManifest(): Promise<StoreManifest> {
     d.type ??= d.platform === "android" ? "android" : d.key.startsWith("ipad") ? "ipad" : "iphone";
   }
 
-  // Raw captures keep their names across a re-capture, so the manifest's
-  // timestamp becomes a cache-buster - a capture followed by a manifest
-  // reload shows new pixels.
+  // Raw captures and regenerated art keep their names across a recapture or
+  // `goldie art --force`, so the manifest's timestamp becomes a cache-buster -
+  // a redo followed by a manifest reload shows the new pixels rather than a
+  // stale cached image.
   const v = `?v=${Date.parse(manifest.generatedAt) || 0}`;
   for (const device of Object.values(manifest.design.captures)) {
     for (const captures of [device, ...Object.values(device.byLocale ?? {})]) {
       for (const shot of captures.screenshots) shot.url += v;
       for (const clip of captures.clips ?? []) clip.url += v;
     }
+  }
+  const bust = (url: string | undefined) => (url && url !== "none" ? `${url}${v}` : url);
+  const bustDecorations = (list: Decoration[] | undefined) => {
+    for (const d of list ?? []) if (d.kind === "image") d.src = bust(d.src)!;
+  };
+  manifest.design.theme.backgroundImage = bust(manifest.design.theme.backgroundImage);
+  manifest.design.theme.backdrop = bust(manifest.design.theme.backdrop);
+  bustDecorations(manifest.design.decorations);
+  for (const scene of manifest.design.scenes) {
+    scene.backgroundImage = bust(scene.backgroundImage);
+    bustDecorations(scene.decorations);
   }
   return manifest;
 }
@@ -270,11 +301,23 @@ export type SavedDesign = {
   screenOnly?: boolean;
   /** Layout overrides per screenshot scene id. */
   sceneLayouts?: Record<string, string>;
+  /**
+   * Decorations edited in the element editor, per screenshot scene id. Once
+   * the editor touches a scene, this list replaces the config's
+   * `scenes[].decorations` for it, exactly as the CLI's applyDesign does.
+   * Image `src` is saved config-relative (see Decoration.configSrc above).
+   */
+  sceneDecorations?: Record<string, Decoration[]>;
+  /** The editor's moves of each scene's copy block and devices, per screenshot scene id. */
+  sceneTransforms?: Record<string, SceneTransform>;
+  /** AI art choices made in the studio's Settings view; each overrides the config's `art` field. */
+  art?: { provider?: "openai" | "fal"; model?: string; draftModel?: string; style?: string };
 };
 
 export type SceneCopy = {
   headline?: Record<string, string>;
   subhead?: Record<string, string>;
+  kicker?: Record<string, string>;
 };
 
 export async function loadDesign(): Promise<SavedDesign> {
@@ -285,6 +328,20 @@ export async function loadDesign(): Promise<SavedDesign> {
     return parsed && typeof parsed === "object" ? (parsed as SavedDesign) : {};
   } catch {
     return {}; // a static build has no API; the config's values stand
+  }
+}
+
+export type ArtLibraryImage = { src: string; url: string };
+
+/** Every image the config references or keeps in its art dir, for the editor's Add > Image picker. */
+export async function loadArtLibrary(): Promise<ArtLibraryImage[]> {
+  try {
+    const res = await fetch("/api/art-library", { cache: "no-store" });
+    if (!res.ok) return [];
+    const parsed = await res.json();
+    return Array.isArray(parsed?.images) ? (parsed.images as ArtLibraryImage[]) : [];
+  } catch {
+    return []; // a static build (no API) or the dev server not yet restarted; Add > Image is just empty
   }
 }
 

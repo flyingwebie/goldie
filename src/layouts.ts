@@ -24,7 +24,7 @@ export const LAYOUT_KEYS = [
 ] as const;
 export type LayoutKey = (typeof LAYOUT_KEYS)[number];
 
-export type CopyAlign = "center" | "left";
+export type CopyAlign = "center" | "left" | "right";
 export type CopyPosition = "top" | "bottom" | "none";
 
 export type LayoutSpec = {
@@ -468,4 +468,97 @@ export function compose(
 /** Whether a layout draws a second capture, which needs the scene's `secondScene`. */
 export function needsSecondCapture(spec: LayoutSpec): boolean {
   return spec.devices.some((d) => d.capture === "secondary");
+}
+
+/**
+ * A nudge the studio editor applied to one element: an offset as fractions of
+ * the tile (dx of its width, dy of its height), a scale about the element's
+ * centre, and degrees added to its rotation. Identity when every field is
+ * missing.
+ */
+export type ElementTransform = { dx?: number; dy?: number; scale?: number; rotate?: number };
+
+/** The copy block's nudge, plus an alignment that overrides the layout's. */
+export type CopyTransform = ElementTransform & { align?: CopyAlign };
+
+/** The editor's adjustments to one scene's copy block and devices (by index, back to front). */
+export type SceneTransform = { copy?: CopyTransform; devices?: ElementTransform[] };
+
+/**
+ * A composition with the editor's adjustments applied. Pure, like compose():
+ * the canvas renderer and the studio both call it after compose(), so a
+ * dragged phone lands in the same place in the export. Copy scales by its
+ * type width and wrap width; devices scale and rotate about their centre.
+ */
+export function applyTransform(
+  c: Composition,
+  t: SceneTransform | undefined,
+  tile: { width: number; height: number },
+): Composition {
+  if (!t) return c;
+  const dx = (e?: ElementTransform) => (e?.dx ?? 0) * tile.width;
+  const dy = (e?: ElementTransform) => (e?.dy ?? 0) * tile.height;
+  let copy = c.copy;
+  if (copy && t.copy) {
+    const k = t.copy.scale ?? 1;
+    const ox = dx(t.copy);
+    const oy = dy(t.copy);
+    copy = {
+      ...copy,
+      x: copy.x + ox,
+      y: copy.y + oy,
+      maxWidth: copy.maxWidth * k,
+      typeWidth: copy.typeWidth * k,
+      box: {
+        left: copy.box.left + ox + (copy.box.width - copy.box.width * k) / 2,
+        top: copy.box.top + oy,
+        width: copy.box.width * k,
+        height: copy.box.height * k,
+      },
+    };
+    // An alignment override re-anchors the lines inside the (moved) block:
+    // its left edge, centre line or right edge.
+    const align = t.copy.align;
+    if (align && align !== copy.align) {
+      const { left, width } = copy.box;
+      copy = {
+        ...copy,
+        align,
+        x: align === "left" ? left : align === "center" ? left + width / 2 : left + width,
+      };
+    }
+  }
+  const devices = c.devices.map((d, i) => {
+    const e = t.devices?.[i];
+    if (!e) return d;
+    const k = e.scale ?? 1;
+    const cx = d.frame.left + d.frame.width / 2 + dx(e);
+    const cy = d.frame.top + d.frame.height / 2 + dy(e);
+    const map = (r: { left: number; top: number; width: number; height: number }) => {
+      const rcx = r.left + r.width / 2 - (d.frame.left + d.frame.width / 2);
+      const rcy = r.top + r.height / 2 - (d.frame.top + d.frame.height / 2);
+      const w = r.width * k;
+      const h = r.height * k;
+      return { left: cx + rcx * k - w / 2, top: cy + rcy * k - h / 2, width: w, height: h };
+    };
+    return {
+      ...d,
+      frame: map(d.frame),
+      screen: { ...map(d.screen), radius: d.screen.radius * k },
+      rotate: d.rotate + (e.rotate ?? 0),
+    };
+  });
+  return { ...c, copy, devices };
+}
+
+/**
+ * A scene's editor transform with the config's `align` folded in underneath:
+ * an alignment picked in the studio wins over the config's.
+ */
+export function sceneTransform(
+  scene: { align?: CopyAlign },
+  t: SceneTransform | undefined,
+): SceneTransform | undefined {
+  if (!scene.align) return t;
+  return { ...t, copy: { align: scene.align, ...t?.copy } };
 }

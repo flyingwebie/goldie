@@ -525,10 +525,17 @@ export async function warmUp(udid: string, bundleId: string): Promise<void> {
   await argent.run("await-screen-idle", { udid, timeoutMs: 60000 }).catch(() => {});
 }
 
-/** Whether an app is installed on an iOS simulator. */
-export async function isInstalled(udid: string, bundleId: string): Promise<boolean> {
-  const r = await exec("xcrun", ["simctl", "get_app_container", udid, bundleId], { quiet: true });
-  return r.code === 0;
+/** Whether an app is installed: an iOS simulator by udid, or an android device by adb serial. */
+export async function isInstalled(
+  udid: string,
+  bundleId: string,
+  platform: "ios" | "android" = "ios",
+): Promise<boolean> {
+  const r =
+    platform === "android"
+      ? await exec("adb", ["-s", udid, "shell", "pm", "path", bundleId], { quiet: true })
+      : await exec("xcrun", ["simctl", "get_app_container", udid, bundleId], { quiet: true });
+  return r.code === 0 && (platform === "ios" || r.stdout.includes("package:"));
 }
 
 export async function installApp(udid: string, appPath: string, bundleId: string): Promise<void> {

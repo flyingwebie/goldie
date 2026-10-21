@@ -214,3 +214,27 @@ describe("falProvider.generate", () => {
     );
   });
 });
+
+describe("variantFor", () => {
+  test("maps a picked model to the endpoint the asset needs", async () => {
+    const { variantFor } = await import("./fal.ts");
+    expect(variantFor("fal-ai/nano-banana-pro/edit", false)).toBe("fal-ai/nano-banana-pro");
+    expect(variantFor("fal-ai/nano-banana-pro", true)).toBe("fal-ai/nano-banana-pro/edit");
+    expect(variantFor("fal-ai/bytedance/seedream/v4/text-to-image", true)).toBe(
+      "fal-ai/bytedance/seedream/v4/edit",
+    );
+    expect(variantFor("fal-ai/bytedance/seedream/v4/edit", false)).toBe(
+      "fal-ai/bytedance/seedream/v4/text-to-image",
+    );
+    expect(variantFor("fal-ai/recraft-v3", true)).toBe("fal-ai/recraft-v3");
+  });
+});
+
+describe("nanoBananaResolution", () => {
+  test("final art at 2K, a strip backdrop at 4K, drafts at 1K", async () => {
+    const { nanoBananaResolution } = await import("./fal.ts");
+    expect(nanoBananaResolution({ quality: "final", aspect: "square" })).toBe("2K");
+    expect(nanoBananaResolution({ quality: "final", aspect: "strip" })).toBe("4K");
+    expect(nanoBananaResolution({ quality: "draft", aspect: "strip" })).toBe("1K");
+  });
+});
