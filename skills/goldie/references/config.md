@@ -86,6 +86,7 @@ const config: GoldieConfig = {
       subhead: { "en-US": "Grouped by status, sorted the way your team works." },
       // background: "..."     optional per-scene override
       // layout: "hero",        optional per-scene layout
+      // align: "left",         copy alignment: left | center | right (overrides the layout's)
       // secondScene: "detail", the second screen for duo / panorama-duo
       // decorations: [...],    layers on this tile only
     },

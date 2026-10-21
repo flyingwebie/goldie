@@ -24,7 +24,7 @@ export const LAYOUT_KEYS = [
 ] as const;
 export type LayoutKey = (typeof LAYOUT_KEYS)[number];
 
-export type CopyAlign = "center" | "left";
+export type CopyAlign = "center" | "left" | "right";
 export type CopyPosition = "top" | "bottom" | "none";
 
 export type LayoutSpec = {
@@ -478,8 +478,11 @@ export function needsSecondCapture(spec: LayoutSpec): boolean {
  */
 export type ElementTransform = { dx?: number; dy?: number; scale?: number; rotate?: number };
 
+/** The copy block's nudge, plus an alignment that overrides the layout's. */
+export type CopyTransform = ElementTransform & { align?: CopyAlign };
+
 /** The editor's adjustments to one scene's copy block and devices (by index, back to front). */
-export type SceneTransform = { copy?: ElementTransform; devices?: ElementTransform[] };
+export type SceneTransform = { copy?: CopyTransform; devices?: ElementTransform[] };
 
 /**
  * A composition with the editor's adjustments applied. Pure, like compose():
@@ -513,6 +516,17 @@ export function applyTransform(
         height: copy.box.height * k,
       },
     };
+    // An alignment override re-anchors the lines inside the (moved) block:
+    // its left edge, centre line or right edge.
+    const align = t.copy.align;
+    if (align && align !== copy.align) {
+      const { left, width } = copy.box;
+      copy = {
+        ...copy,
+        align,
+        x: align === "left" ? left : align === "center" ? left + width / 2 : left + width,
+      };
+    }
   }
   const devices = c.devices.map((d, i) => {
     const e = t.devices?.[i];
@@ -535,4 +549,16 @@ export function applyTransform(
     };
   });
   return { ...c, copy, devices };
+}
+
+/**
+ * A scene's editor transform with the config's `align` folded in underneath:
+ * an alignment picked in the studio wins over the config's.
+ */
+export function sceneTransform(
+  scene: { align?: CopyAlign },
+  t: SceneTransform | undefined,
+): SceneTransform | undefined {
+  if (!scene.align) return t;
+  return { ...t, copy: { align: scene.align, ...t?.copy } };
 }

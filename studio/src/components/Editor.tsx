@@ -1,4 +1,7 @@
 import {
+  AlignCenterIcon,
+  AlignLeftIcon,
+  AlignRightIcon,
   ArrowDownToLineIcon,
   ArrowUpToLineIcon,
   CropIcon,
@@ -21,7 +24,7 @@ import {
   snapRotation,
   toFraction,
 } from "../../../src/editor-geom";
-import type { Composition } from "../../../src/layouts";
+import type { Composition, CopyAlign } from "../../../src/layouts";
 import type { ArtLibraryImage, Decoration, SceneTransform } from "../manifest";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -754,7 +757,7 @@ export function AddMenu({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button type="button" variant="outline" size="sm">
+        <Button type="button" variant="default" size="sm">
           <PlusIcon /> Add
         </Button>
       </PopoverTrigger>
@@ -829,6 +832,9 @@ export function Inspector({
   locale,
   onReset,
   onPickRegion,
+  copyText,
+  onCopyText,
+  defaultAlign,
 }: {
   selection: Selection;
   onSelect: (sel: Selection) => void;
@@ -840,6 +846,9 @@ export function Inspector({
   locale: string;
   onReset: () => void;
   onPickRegion: () => void;
+  copyText: { kicker: string; headline: string; subhead: string };
+  onCopyText: (field: "headline" | "subhead" | "kicker", text: string) => void;
+  defaultAlign: CopyAlign;
 }) {
   const setDecoration = (patch: Partial<Decoration>, fieldKey: string) => {
     if (selection.kind !== "decoration") return;
@@ -1084,13 +1093,106 @@ export function Inspector({
         />
       ) : null}
       {selection.kind === "copy" ? (
-        <TransformFields
-          t={transform.copy}
-          onChange={(t) => onTransform({ ...transform, copy: t }, "field:copy")}
-          baseRotate={0}
-          rotatable={false}
-        />
+        <>
+          <CopyFields text={copyText} onChange={onCopyText} />
+          <AlignRow
+            value={transform.copy?.align ?? defaultAlign}
+            onChange={(align) =>
+              onTransform({ ...transform, copy: { ...transform.copy, align } }, "field:copy:align")
+            }
+          />
+          <TransformFields
+            t={transform.copy}
+            onChange={(t) => onTransform({ ...transform, copy: t }, "field:copy")}
+            baseRotate={0}
+            rotatable={false}
+          />
+        </>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * The tile's kicker, headline and subhead in the current locale. Edits go
+ * through the same copy override the lightbox used to edit in place, so they
+ * save to goldie.design.json and undo like any other change.
+ */
+function CopyFields({
+  text,
+  onChange,
+}: {
+  text: { kicker: string; headline: string; subhead: string };
+  onChange: (field: "headline" | "subhead" | "kicker", text: string) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      <TextRow label="Kicker" value={text.kicker} onChange={(v) => onChange("kicker", v)} />
+      <TextAreaRow
+        label="Headline"
+        hint="Wrap a word in *asterisks* to stress it. Enter starts a new line."
+        value={text.headline}
+        onChange={(v) => onChange("headline", v)}
+      />
+      <TextAreaRow label="Subhead" value={text.subhead} onChange={(v) => onChange("subhead", v)} />
+    </div>
+  );
+}
+
+function TextAreaRow({
+  label,
+  hint,
+  value,
+  onChange,
+}: {
+  label: string;
+  hint?: string;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const id = useId();
+  return (
+    <label htmlFor={id} className="flex flex-col gap-0.5">
+      <span className="text-[10px] text-muted-foreground">{label}</span>
+      <textarea
+        id={id}
+        value={value}
+        rows={2}
+        onChange={(e) => onChange(e.target.value)}
+        className="min-h-12 resize-y rounded-md border border-input bg-transparent px-2 py-1 text-xs leading-snug outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
+      />
+      {hint ? <span className="text-[10px] text-muted-foreground">{hint}</span> : null}
+    </label>
+  );
+}
+
+/** Left / centre / right for the copy block's lines. */
+function AlignRow({ value, onChange }: { value: CopyAlign; onChange: (v: CopyAlign) => void }) {
+  const options: Array<{ v: CopyAlign; label: string; Icon: typeof AlignLeftIcon }> = [
+    { v: "left", label: "Align left", Icon: AlignLeftIcon },
+    { v: "center", label: "Align centre", Icon: AlignCenterIcon },
+    { v: "right", label: "Align right", Icon: AlignRightIcon },
+  ];
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="text-[10px] text-muted-foreground">Alignment</span>
+      <div className="flex gap-1" role="radiogroup" aria-label="Alignment">
+        {options.map(({ v, label, Icon }) => (
+          <Button
+            key={v}
+            type="button"
+            size="icon-sm"
+            variant={value === v ? "default" : "outline"}
+            role="radio"
+            aria-checked={value === v}
+            aria-label={label}
+            title={label}
+            onClick={() => onChange(v)}
+          >
+            <Icon />
+          </Button>
+        ))}
+      </div>
     </div>
   );
 }

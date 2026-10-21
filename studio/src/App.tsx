@@ -222,7 +222,11 @@ function Loaded({ manifest, saved }: { manifest: StoreManifest; saved: SavedDesi
       else delete next[sceneId];
       return { ...prev, sceneLayouts: next };
     });
-  const setSceneCopy = (sceneId: string, fieldName: "headline" | "subhead", text: string) =>
+  const setSceneCopy = (
+    sceneId: string,
+    fieldName: "headline" | "subhead" | "kicker",
+    text: string,
+  ) =>
     set(`copy:${sceneId}:${fieldName}`, (prev) => ({
       ...prev,
       copy: {

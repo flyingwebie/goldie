@@ -7,6 +7,7 @@ import {
   LAYOUTS,
   needsSecondCapture,
   resolveScenes,
+  sceneTransform,
 } from "./layouts.ts";
 import { DEVICES } from "./specs.ts";
 
@@ -204,5 +205,25 @@ describe("applyTransform", () => {
     const t = applyTransform(c, { copy: { dy: 0.1, scale: 1.2 } }, tile);
     expect(t.copy!.y).toBeCloseTo(c.copy!.y + 286.8, 6);
     expect(t.copy!.typeWidth).toBeCloseTo(c.copy!.typeWidth * 1.2, 6);
+  });
+});
+
+describe("copy alignment", () => {
+  test("re-anchors the copy at the block's left, centre or right edge", () => {
+    const c = compose(LAYOUTS.classic, tile, theme);
+    const { left, width } = c.copy!.box;
+    const at = (align: "left" | "center" | "right") =>
+      applyTransform(c, { copy: { align } }, tile).copy!;
+    expect(at("left")).toMatchObject({ align: "left", x: left });
+    expect(at("right")).toMatchObject({ align: "right", x: left + width });
+    expect(at("center").x).toBeCloseTo(c.copy!.x, 6);
+  });
+
+  test("a studio alignment wins over the config's", () => {
+    expect(sceneTransform({ align: "left" }, undefined)).toEqual({ copy: { align: "left" } });
+    expect(sceneTransform({ align: "left" }, { copy: { align: "right", dy: 0.1 } })).toEqual({
+      copy: { align: "right", dy: 0.1 },
+    });
+    expect(sceneTransform({}, undefined)).toBeUndefined();
   });
 });

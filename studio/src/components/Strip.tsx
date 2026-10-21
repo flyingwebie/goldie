@@ -8,6 +8,7 @@ import {
   applyTransform,
   BADGE,
   type Composition,
+  type CopyAlign,
   compose,
   isTemplateKey,
   type LAYOUTS,
@@ -16,6 +17,7 @@ import {
   SCREEN_SHADOW,
   type SceneTransform,
   TYPE,
+  sceneTransform as withConfigAlign,
 } from "../../../src/layouts";
 import {
   BUBBLE,
@@ -149,6 +151,11 @@ export type EditorEntryInfo = {
   /** The scene's pre-transform composition, for the device rotate values ElementTransform.rotate is relative to. */
   baseComposition: Composition;
   artLibrary: ArtLibraryImage[];
+  /** The tile's copy in the current locale, as shown, for the inspector's text fields. */
+  copyText: { kicker: string; headline: string; subhead: string };
+  onCopyText: (field: "headline" | "subhead" | "kicker", text: string) => void;
+  /** The copy alignment in effect before any editor override: the config's, else the layout's. */
+  defaultAlign: CopyAlign;
   history: { canUndo: boolean; canRedo: boolean; undo: () => void; redo: () => void };
   onResetScene: () => void;
   onRevertAll: () => void;
@@ -195,7 +202,7 @@ export function Strip({
   frameUrl: string;
   fontFamily: string;
   copy: Record<string, SceneCopy>;
-  onCopy: (sceneId: string, field: "headline" | "subhead", text: string) => void;
+  onCopy: (sceneId: string, field: "headline" | "subhead" | "kicker", text: string) => void;
   /** Screenshot scene ids in display order; empty means the config's order. */
   order: string[];
   onReorder: (order: string[]) => void;
@@ -404,6 +411,13 @@ export function Strip({
         copyScale: tileSpec.copyScale,
       }),
       artLibrary,
+      copyText: {
+        kicker: copy[scene.id]?.kicker?.[locale] ?? scene.kicker?.[locale] ?? "",
+        headline: copy[scene.id]?.headline?.[locale] ?? scene.headline[locale] ?? "",
+        subhead: copy[scene.id]?.subhead?.[locale] ?? scene.subhead?.[locale] ?? "",
+      },
+      onCopyText: (field, text) => onCopy(scene.id, field, text),
+      defaultAlign: (scene.align ?? spec.copy.align) as CopyAlign,
       history,
       onResetScene: () => {
         onRevertScene(scene.id);
@@ -447,7 +461,8 @@ export function Strip({
             geom={geom}
             copyScale={tileSpec.copyScale}
             fontFamily={fontFamily}
-            kicker={scene.kicker?.[locale]}
+            kicker={copy[scene.id]?.kicker?.[locale] ?? scene.kicker?.[locale]}
+            sceneAlign={scene.align}
             headline={copy[scene.id]?.headline?.[locale] ?? scene.headline[locale] ?? ""}
             subhead={copy[scene.id]?.subhead?.[locale] ?? scene.subhead?.[locale]}
             headlineColor={headlineColor}
@@ -460,7 +475,9 @@ export function Strip({
             resolveArtUrl={resolveArtUrl}
             sceneTransform={sceneTransform}
             locale={locale}
-            onEdit={editable ? (field, text) => onCopy(scene.id, field, text) : undefined}
+            // The lightbox edits copy through the editor's Copy inspector; in-place
+            // contentEditable would fight the selection layer for clicks and focus.
+            onEdit={undefined}
             editor={editable ? editorInfo : undefined}
           />
         ),
@@ -858,6 +875,9 @@ function Lightbox({
             baseComposition={editor.baseComposition}
             locale={locale}
             onReset={() => resetSelected(editor)}
+            copyText={editor.copyText}
+            onCopyText={editor.onCopyText}
+            defaultAlign={editor.defaultAlign}
             onPickRegion={() => {
               if (editor.selection?.kind === "decoration")
                 editor.onPickRegion(editor.selection.index);
@@ -1002,6 +1022,7 @@ function ScreenshotScene({
   sceneDecorations,
   resolveArtUrl,
   sceneTransform,
+  sceneAlign,
   locale,
   onEdit,
   editor,
@@ -1041,14 +1062,16 @@ function ScreenshotScene({
   sceneDecorations: Decoration[];
   resolveArtUrl: (configSrc: string) => string;
   sceneTransform: SceneTransform;
+  /** The config's alignment for this scene; an alignment picked in the editor wins. */
+  sceneAlign?: CopyAlign;
   locale: string;
-  onEdit?: (field: "headline" | "subhead", text: string) => void;
+  onEdit?: (field: "headline" | "subhead" | "kicker", text: string) => void;
   /** Set only for the lightbox's own render; mounts the selection/drag/resize/rotate overlay. */
   editor?: EditorEntryInfo;
 }) {
   const effectiveGeom = geom ?? frame;
   const base = compose(spec, tile, theme, { screenOnly, geom: effectiveGeom, copyScale });
-  const c = applyTransform(base, sceneTransform, tile);
+  const c = applyTransform(base, withConfigAlign({ align: sceneAlign }, sceneTransform), tile);
   const displayDecorations = sceneDecorations.map((d) => displayDecoration(d, resolveArtUrl));
   const containerRef = useRef<HTMLDivElement>(null);
   const { w, h } = cq(tile);
@@ -1154,7 +1177,12 @@ function ScreenshotScene({
               height: h(copy.box.height),
               display: "flex",
               flexDirection: "column",
-              alignItems: copy.align === "left" ? "flex-start" : "center",
+              alignItems:
+                copy.align === "left"
+                  ? "flex-start"
+                  : copy.align === "right"
+                    ? "flex-end"
+                    : "center",
               gap: h(tile.height * TYPE.gap),
               textAlign: copy.align,
             }}

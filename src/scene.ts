@@ -18,7 +18,7 @@ import {
 import type { SceneInput } from "./draw.ts";
 import { registerFonts } from "./fonts.ts";
 import type { FrameGeometry } from "./frame.ts";
-import { applyTransform, compose, type LayoutSpec } from "./layouts.ts";
+import { applyTransform, compose, type LayoutSpec, sceneTransform } from "./layouts.ts";
 import { DEVICES, type DeviceKey } from "./specs.ts";
 
 export type PreparedScene = {
@@ -96,7 +96,7 @@ export async function prepareScenes(
         geom,
         copyScale: opts.copyScale ?? spec.copyScale,
       }),
-      cfg.sceneTransforms?.[scene.id],
+      sceneTransform(scene, cfg.sceneTransforms?.[scene.id]),
       tile,
     );
     const decorations: Decoration[] = [

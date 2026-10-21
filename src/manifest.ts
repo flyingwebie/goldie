@@ -110,6 +110,8 @@ export type StoreManifest = {
       headline: Record<string, string>;
       subhead?: Record<string, string>;
       kicker?: Record<string, string>;
+      /** The config's copy alignment for this scene, overriding its layout's. */
+      align?: "left" | "center" | "right";
       /** The scene's own CSS background, overriding the theme's. */
       background?: string;
       /** Url under out/web, or "none". */
@@ -259,6 +261,7 @@ export async function writeManifest(cfg: LoadedConfig): Promise<string> {
       headline: scene.headline,
       ...(scene.subhead ? { subhead: scene.subhead } : {}),
       ...(scene.kicker ? { kicker: scene.kicker } : {}),
+      ...(scene.align ? { align: scene.align } : {}),
       ...(scene.background ? { background: scene.background } : {}),
       ...(scene.backgroundImage ? { backgroundImage: await webAsset(scene.backgroundImage) } : {}),
       ...(scene.layout ? { layout: scene.layout } : {}),

@@ -5,6 +5,7 @@ import { validateArt } from "./art/validate.ts";
 import type { CustomFont } from "./fonts.ts";
 import { ANDROID_FRAME, FRAMES, type FrameGeometry } from "./frame.ts";
 import {
+  type CopyAlign,
   isLayoutKey,
   isTemplateKey,
   LAYOUT_KEYS,
@@ -69,6 +70,8 @@ export type ScreenshotScene = {
   backgroundImage?: string;
   /** Overrides theme.layout for this scene; a key from src/layouts.ts. */
   layout?: LayoutKey;
+  /** Aligns this scene's copy left, centre or right, overriding its layout's alignment. */
+  align?: CopyAlign;
   /**
    * Id of another screenshot scene whose capture fills the second device in
    * the duo and panorama-duo layouts. Defaults to the next scene.
@@ -656,6 +659,7 @@ export type DesignOverrides = {
 export type SceneCopy = {
   headline?: Record<string, string>;
   subhead?: Record<string, string>;
+  kicker?: Record<string, string>;
 };
 
 /** Path of the design sidecar for a config file. */
@@ -715,6 +719,7 @@ export function applyDesign(cfg: LoadedConfig, design: DesignOverrides): void {
       if (!isScreenshot(scene) || !copy) continue;
       if (copy.headline) scene.headline = { ...scene.headline, ...copy.headline };
       if (copy.subhead) scene.subhead = { ...scene.subhead, ...copy.subhead };
+      if (copy.kicker) scene.kicker = { ...scene.kicker, ...copy.kicker };
     }
   }
   if (design.order) cfg.scenes = reorderScenes(cfg.scenes, design.order);

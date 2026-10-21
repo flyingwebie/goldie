@@ -11,7 +11,7 @@ import { type CanvasGradient, type Image, Path2D, type SKRSContext2D } from "@na
 import type { Decoration, EmphasisStyle, Theme } from "./config.ts";
 import { withGlyphFallback } from "./fonts.ts";
 import type { FrameGeometry } from "./frame.ts";
-import { BADGE, type Composition, SCREEN_SHADOW, TYPE } from "./layouts.ts";
+import { BADGE, type Composition, type CopyAlign, SCREEN_SHADOW, TYPE } from "./layouts.ts";
 import {
   BUBBLE,
   bubblePath,
@@ -335,7 +335,7 @@ function lineBox(
   line: RichLine,
   x: number,
   top: number,
-  align: "left" | "center",
+  align: CopyAlign,
 ): Box {
   const widths = line.map((seg) => {
     ctx.font = b.font(seg.em);
@@ -343,7 +343,7 @@ function lineBox(
     return ctx.measureText(seg.text).width;
   });
   const lineWidth = widths.reduce((a, w) => a + w, 0);
-  const left = align === "center" ? x - lineWidth / 2 : x;
+  const left = align === "center" ? x - lineWidth / 2 : align === "right" ? x - lineWidth : x;
   return { left, top, width: lineWidth, height: b.size * b.lineHeight };
 }
 
@@ -455,7 +455,7 @@ function drawBlock(
   b: Block,
   x: number,
   y: number,
-  align: "left" | "center",
+  align: CopyAlign,
   motion: Motion,
 ): number {
   const step = b.size * b.lineHeight;

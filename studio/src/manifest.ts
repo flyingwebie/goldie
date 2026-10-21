@@ -148,6 +148,8 @@ export type DesignScene = {
   subhead?: Record<string, string>;
   /** A short handwritten line above the headline, per locale. */
   kicker?: Record<string, string>;
+  /** The config's copy alignment for this scene, overriding its layout's. */
+  align?: "left" | "center" | "right";
   /** The scene's own CSS background, overriding the theme's. */
   background?: string;
   /** Url under out/web, or "none" to clear the theme's backgroundImage. */
@@ -299,6 +301,7 @@ export type SavedDesign = {
 export type SceneCopy = {
   headline?: Record<string, string>;
   subhead?: Record<string, string>;
+  kicker?: Record<string, string>;
 };
 
 export async function loadDesign(): Promise<SavedDesign> {
