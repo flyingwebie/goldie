@@ -1,7 +1,7 @@
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { AnimatePresence, Reorder } from "motion/react";
 import type React from "react";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { Fragment, type ReactNode, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { FRAMES, type FrameGeometry } from "../../../src/frame";
 import {
@@ -15,12 +15,25 @@ import {
   SCREEN_SHADOW,
   TYPE,
 } from "../../../src/layouts";
+import {
+  BUBBLE,
+  CARD_SHADOW,
+  calloutGeometry,
+  circleMarkPath,
+  HIGHLIGHT,
+  MARK_STROKE,
+  ratingGeometry,
+  underlineMarkPath,
+} from "../../../src/marks";
+import { mapRuns, parseEmphasis, type Run } from "../../../src/richtext";
 import type {
   Decoration,
   Design,
   DesignScene,
   DeviceCaptures,
   DeviceEntry,
+  EmphasisStyle,
+  HeadlineStyle,
   SceneCopy,
   Theme,
 } from "../manifest";
@@ -36,6 +49,12 @@ const PAGE_SIZE = 5;
 /** Apple's cap on screenshots per device family. Extra tiles stay visible, dimmed. */
 const MAX_SCREENSHOTS = 10;
 const GAP = "1rem";
+
+/** The script face behind kickers, script emphasis and script bubbles when the theme names none; mirrors DEFAULT_SCRIPT_FONT in src/draw.ts. */
+const DEFAULT_SCRIPT_FONT = '"Caveat", cursive';
+
+/** A 0-100 normalized box, for the underline/circle mark paths; stretched non-uniformly onto the real word box by the SVG's viewBox. */
+const MARK_BOX = { left: 0, top: 0, width: 100, height: 100 };
 
 /** Flex basis for a grid cell that occupies `span` screenshot slots in a PAGE_SIZE row. */
 const cellBasis = (span: number) =>
@@ -82,7 +101,10 @@ export type StripView = "strip" | "grid";
  *
  * In the lightbox the headline and subhead are editable in place; a change
  * is reported through onCopy for the current locale and layered over the
- * config's copy here and in the CLI, via goldie.design.json.
+ * config's copy here and in the CLI, via goldie.design.json. The headline
+ * supports `*word*` emphasis markup: focused, the raw text (asterisks and
+ * all) is shown for editing; blurred, it renders the theme's emphasis style,
+ * so the markers stay round-trippable through goldie.design.json.
  *
  * Screenshot tiles can be dragged into a new order; the resulting scene id
  * list is reported through onReorder and saved the same way, so an export
@@ -95,6 +117,7 @@ export function Strip({
   spec: tileSpec,
   locale,
   background,
+  backgroundOverridden,
   frameUrl,
   fontFamily,
   copy,
@@ -113,6 +136,12 @@ export function Strip({
   spec: DeviceEntry;
   locale: string;
   background: string;
+  /**
+   * Whether a studio background choice overrides every scene's own
+   * `background`, mirroring the CLI's applyDesign (a design.background
+   * clears every scene.background and may flip the copy colors).
+   */
+  backgroundOverridden: boolean;
   frameUrl: string;
   fontFamily: string;
   copy: Record<string, SceneCopy>;
@@ -159,11 +188,23 @@ export function Strip({
   const defaultLayoutOf = (scene: DesignScene) =>
     unforced.find((r) => r.scene.id === scene.id)!.layout.key;
 
+  // The first store slot each scene's composition fills, and the strip's
+  // total slot count (a panorama fills two); mirrors the `slot` counter in
+  // src/scene.ts, which a theme.backdrop slices itself against.
+  const slotOf: Record<string, number> = {};
+  let slotCounter = 0;
+  for (const r of resolved) {
+    slotOf[r.scene.id] = slotCounter;
+    slotCounter += r.layout.span;
+  }
+  const totalSlots = slotCounter;
+
   // Mirrors the CLI's --background handling: a dark background flips the copy
-  // to light, a light background flips light copy colors to dark, and
-  // per-scene background overrides are dropped, so the export matches what
-  // is on screen.
-  const bgLum = backgroundLuminance(background);
+  // to light, a light background flips light copy colors to dark. Only an
+  // active override does this - mirroring applyDesign, which computes the
+  // luminance off design.background alone and leaves per-scene backgrounds
+  // (and their authored copy colors) untouched otherwise.
+  const bgLum = backgroundOverridden ? backgroundLuminance(background) : null;
   const dark = bgLum !== null && bgLum < 0.5;
   const light = bgLum !== null && bgLum >= 0.5;
   const lightColor = (c: string) => (backgroundLuminance(c) ?? 0) > 0.5;
@@ -262,15 +303,22 @@ export function Strip({
           <ScreenshotScene
             spec={spec}
             slice={slice}
+            first={slotOf[scene.id] ?? 0}
+            totalSlots={totalSlots}
             tile={tileSpec.screenshot}
             frame={frameGeometry}
             theme={theme}
             screenOnly={screenOnly}
             background={background}
+            backgroundOverridden={backgroundOverridden}
+            sceneBackground={scene.background}
+            sceneBackgroundImage={scene.backgroundImage}
+            backdropUrl={theme.backdrop}
             frameUrl={deviceFrameUrl}
             geom={geom}
             copyScale={tileSpec.copyScale}
             fontFamily={fontFamily}
+            kicker={scene.kicker?.[locale]}
             headline={copy[scene.id]?.headline?.[locale] ?? scene.headline[locale] ?? ""}
             subhead={copy[scene.id]?.subhead?.[locale] ?? scene.subhead?.[locale]}
             headlineColor={headlineColor}
@@ -727,21 +775,27 @@ function Canvas({
  * geometry, expressed in container-query units of one tile. A panorama
  * layout renders the whole span-wide composition and shifts it left by
  * `slice` tiles, so each tile shows its own slice. With onEdit set, the
- * headline and subhead are contentEditable and report their text when
- * editing ends (blur, or Enter).
+ * headline and subhead are editable in place.
  */
 function ScreenshotScene({
   spec,
   slice,
+  first,
+  totalSlots,
   tile,
   frame,
   theme,
   screenOnly,
   background,
+  backgroundOverridden,
+  sceneBackground,
+  sceneBackgroundImage,
+  backdropUrl,
   frameUrl,
   geom,
   copyScale,
   fontFamily,
+  kicker,
   headline,
   subhead,
   headlineColor,
@@ -755,16 +809,26 @@ function ScreenshotScene({
 }: {
   spec: (typeof LAYOUTS)[keyof typeof LAYOUTS];
   slice: number;
+  /** This scene's first store slot, and the strip's slot count; a theme.backdrop slices itself against these. */
+  first: number;
+  totalSlots: number;
   tile: { width: number; height: number };
   frame: FrameGeometry;
   theme: Theme;
   screenOnly: boolean;
   background: string;
+  backgroundOverridden: boolean;
+  /** The scene's own CSS background; honoured unless a studio override is active. */
+  sceneBackground: string | undefined;
+  /** Url under out/web, or "none" to clear the theme's backgroundImage; honoured unless overridden. */
+  sceneBackgroundImage: string | undefined;
+  backdropUrl: string | undefined;
   frameUrl: string;
   /** The bezel art's geometry; the iOS bundled art's when the device brings none. */
   geom: FrameGeometry | undefined;
   copyScale: number;
   fontFamily: string;
+  kicker: string | undefined;
   headline: string;
   subhead: string | undefined;
   headlineColor: string;
@@ -776,26 +840,81 @@ function ScreenshotScene({
   locale: string;
   onEdit?: (field: "headline" | "subhead", text: string) => void;
 }) {
-  const c = compose(spec, tile, theme, { screenOnly, geom: geom ?? frame, copyScale });
+  const effectiveGeom = geom ?? frame;
+  const c = compose(spec, tile, theme, { screenOnly, geom: effectiveGeom, copyScale });
   const { w, h } = cq(tile);
   // Wider-than-reference tiles compose at a narrower design width; type
   // follows it, times the device's copy scale.
   const typeScale = (c.copy?.typeWidth ?? c.designWidth) / tile.width;
-  const editable = onEdit ? editableProps : () => ({});
   const copy = c.copy;
+
+  // Mirrors applyDesign: a studio background override replaces every scene's
+  // own background; otherwise the scene's stands (falling back to the
+  // theme's), exactly as the CLI composes it.
+  const rawBackground = backgroundOverridden ? background : (sceneBackground ?? background);
+  const resolvedBackground = rawBackground === TRANSPARENT ? CHECKERBOARD : rawBackground;
+  const bgImageUrl =
+    sceneBackgroundImage === "none" ? undefined : (sceneBackgroundImage ?? theme.backgroundImage);
+
+  const accent = theme.accentColor ?? headlineColor;
+  const emphasis: EmphasisStyle = theme.emphasis ?? "color";
+  const scriptFamily = theme.scriptFontFamily ?? DEFAULT_SCRIPT_FONT;
+  const hs: HeadlineStyle = theme.headline ?? {};
+  const headlineSizeCqw = TYPE.headlineSize * (hs.scale ?? 1) * typeScale * 100;
+  const headlineWeight = hs.weight ?? TYPE.headlineWeight;
+
+  const compositionBox: React.CSSProperties = {
+    position: "absolute",
+    top: 0,
+    left: `${-slice * 100}%`,
+    width: `${spec.span * 100}%`,
+    height: "100%",
+  };
+
   return (
     <Canvas background="transparent" fontFamily={fontFamily}>
-      {/* The full composition; the background spans it so a gradient runs across a panorama. */}
-      <div
-        style={{
-          position: "absolute",
-          top: 0,
-          left: `${-slice * 100}%`,
-          width: `${spec.span * 100}%`,
-          height: "100%",
-          background: background === TRANSPARENT ? CHECKERBOARD : background,
-        }}
-      >
+      {backdropUrl ? (
+        <div
+          style={{
+            position: "absolute",
+            top: 0,
+            left: `${-(first + slice) * 100}cqw`,
+            width: `${totalSlots * 100}cqw`,
+            height: "100cqh",
+            overflow: "hidden",
+          }}
+        >
+          <img
+            src={`/${backdropUrl}`}
+            alt=""
+            draggable={false}
+            style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+          />
+        </div>
+      ) : null}
+
+      {/* Background color/gradient and theme/scene backgroundImage, spanning
+          the whole composition (both panorama tiles together), as drawScene
+          fills and covers before anything else. */}
+      <div style={{ ...compositionBox, background: resolvedBackground }}>
+        {bgImageUrl ? (
+          <img
+            src={`/${bgImageUrl}`}
+            alt=""
+            draggable={false}
+            style={{
+              position: "absolute",
+              inset: 0,
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+            }}
+          />
+        ) : null}
+      </div>
+
+      {/* Copy, decorations and devices, over the backdrop and backgrounds. */}
+      <div style={compositionBox}>
         {copy ? (
           <div
             style={{
@@ -817,19 +936,49 @@ function ScreenshotScene({
               textAlign: copy.align,
             }}
           >
-            <h1
-              style={{
-                margin: 0,
-                color: headlineColor,
-                fontSize: `${TYPE.headlineSize * typeScale * 100}cqw`,
-                lineHeight: TYPE.headlineLineHeight,
-                fontWeight: TYPE.headlineWeight,
-                letterSpacing: `${TYPE.headlineTracking * typeScale * 100}cqw`,
-              }}
-              {...editable((text) => onEdit?.("headline", text), headline, "Headline")}
-            >
-              {headline}
-            </h1>
+            {kicker ? (
+              <p
+                style={{
+                  margin: 0,
+                  color: accent,
+                  fontFamily: scriptFamily,
+                  fontSize: `${TYPE.kickerSize * typeScale * 100}cqw`,
+                  lineHeight: TYPE.kickerLineHeight,
+                  fontWeight: TYPE.kickerWeight,
+                }}
+              >
+                {kicker}
+              </p>
+            ) : null}
+            <Headline
+              text={headline}
+              locale={locale}
+              uppercase={hs.uppercase}
+              emphasis={emphasis}
+              accent={accent}
+              scriptFamily={scriptFamily}
+              headlineSizeCqw={headlineSizeCqw}
+              color={headlineColor}
+              fontSize={`${headlineSizeCqw}cqw`}
+              lineHeight={TYPE.headlineLineHeight}
+              weight={headlineWeight}
+              letterSpacing={`${TYPE.headlineTracking * typeScale * 100}cqw`}
+              stroke={
+                hs.stroke
+                  ? { color: hs.stroke.color, widthCqw: hs.stroke.width * 2 * 100 }
+                  : undefined
+              }
+              shadow={
+                hs.shadow
+                  ? {
+                      color: hs.shadow.color,
+                      blurCqw: hs.shadow.blur * 100,
+                      offsetYCqw: hs.shadow.offsetY * 100,
+                    }
+                  : undefined
+              }
+              onEdit={onEdit ? (text) => onEdit("headline", text) : undefined}
+            />
             {subhead || onEdit ? (
               <p
                 style={{
@@ -840,7 +989,9 @@ function ScreenshotScene({
                   fontWeight: TYPE.subheadWeight,
                   minWidth: "30cqw",
                 }}
-                {...editable((text) => onEdit?.("subhead", text), subhead ?? "", "Subhead")}
+                {...(onEdit
+                  ? editableProps((text) => onEdit("subhead", text), subhead ?? "", "Subhead")
+                  : {})}
               >
                 {subhead}
               </p>
@@ -848,7 +999,19 @@ function ScreenshotScene({
           </div>
         ) : null}
 
-        <Decorations decorations={decorations} tile={tile} locale={locale} color={headlineColor} />
+        <Decorations
+          decorations={decorations}
+          layer="back"
+          tile={tile}
+          locale={locale}
+          headlineColor={headlineColor}
+          fontFamily={fontFamily}
+          scriptFamily={scriptFamily}
+          captureUrl={captureUrl}
+          secondCaptureUrl={secondCaptureUrl}
+          devices={c.devices}
+          geom={effectiveGeom}
+        />
 
         {c.devices.map((device) => {
           const url = device.capture === "secondary" ? secondCaptureUrl : captureUrl;
@@ -863,6 +1026,20 @@ function ScreenshotScene({
             />
           );
         })}
+
+        <Decorations
+          decorations={decorations}
+          layer="front"
+          tile={tile}
+          locale={locale}
+          headlineColor={headlineColor}
+          fontFamily={fontFamily}
+          scriptFamily={scriptFamily}
+          captureUrl={captureUrl}
+          secondCaptureUrl={secondCaptureUrl}
+          devices={c.devices}
+          geom={effectiveGeom}
+        />
       </div>
     </Canvas>
   );
@@ -945,63 +1122,506 @@ function DeviceView({
   );
 }
 
-/** Badge pills in the composition's corners and image layers placed by tile fractions. */
+/** Which side of the device a decoration draws on; callouts lift out by default. Mirrors layerOf in src/draw.ts. */
+function layerOf(d: Decoration): "back" | "front" {
+  return d.layer ?? (d.kind === "callout" ? "front" : "back");
+}
+
+/** The screen a callout cuts from: its device's, or the bezel's proportions on a tile without one. Mirrors calloutScreen in src/draw.ts. */
+function calloutScreen(
+  devices: Composition["devices"],
+  tile: { width: number; height: number },
+  geom: FrameGeometry,
+  which: "primary" | "secondary",
+) {
+  const device = devices.find((d) => d.capture === which) ?? devices[0];
+  if (device) return { width: device.screen.width, height: device.screen.height };
+  const width = tile.width * 0.8;
+  return { width, height: (width * geom.screen.height) / geom.screen.width };
+}
+
+/**
+ * Badge, image, callout, bubble and rating layers, in the composition's own
+ * coordinates (tile fractions). `layer` filters to the back or front half, so
+ * the caller can draw devices between the two calls, as drawDecoration does.
+ */
 function Decorations({
   decorations,
+  layer,
   tile,
   locale,
-  color,
+  headlineColor,
+  fontFamily,
+  scriptFamily,
+  captureUrl,
+  secondCaptureUrl,
+  devices,
+  geom,
 }: {
   decorations: Decoration[];
+  layer: "back" | "front";
   tile: { width: number; height: number };
   locale: string;
-  color: string;
+  headlineColor: string;
+  fontFamily: string;
+  scriptFamily: string;
+  captureUrl: string;
+  secondCaptureUrl: string | undefined;
+  devices: Composition["devices"];
+  geom: FrameGeometry;
 }) {
   const { w, h } = cq(tile);
   const inset = Math.min(tile.width, tile.height) * BADGE.inset;
   return (
     <>
-      {decorations.map((d, i) =>
-        d.kind === "badge" ? (
-          <div
-            // biome-ignore lint/suspicious/noArrayIndexKey: static list from the config
-            key={i}
-            style={{
-              position: "absolute",
-              ...(d.position.endsWith("left") ? { left: w(inset) } : { right: w(inset) }),
-              ...(d.position.startsWith("top") ? { top: h(inset) } : { bottom: h(inset) }),
-              padding: `${w(tile.width * BADGE.padY)} ${w(tile.width * BADGE.padX)}`,
-              borderRadius: "999cqw",
-              background: d.background ?? "rgba(255, 255, 255, 0.85)",
-              color: d.color ?? color,
-              fontSize: `${BADGE.fontSize * 100}cqw`,
-              lineHeight: 1.2,
-              fontWeight: BADGE.weight,
-              whiteSpace: "nowrap",
-            }}
-          >
-            {d.text[locale] ?? ""}
-          </div>
-        ) : (
-          <img
-            // biome-ignore lint/suspicious/noArrayIndexKey: static list from the config
-            key={i}
-            src={`/${d.src}`}
-            alt=""
-            draggable={false}
-            style={{
-              position: "absolute",
-              left: w(tile.width * d.x),
-              top: h(tile.height * d.y),
-              width: w(tile.width * d.width),
-              height: "auto",
-              transform: d.rotate ? `rotate(${d.rotate}deg)` : undefined,
-            }}
-          />
-        ),
-      )}
+      {decorations.map((d, i) => {
+        if (layerOf(d) !== layer) return null;
+        const key = `${d.kind}-${i}`;
+        switch (d.kind) {
+          case "badge":
+            return (
+              <div
+                key={key}
+                style={{
+                  position: "absolute",
+                  ...(d.position.endsWith("left") ? { left: w(inset) } : { right: w(inset) }),
+                  ...(d.position.startsWith("top") ? { top: h(inset) } : { bottom: h(inset) }),
+                  padding: `${w(tile.width * BADGE.padY)} ${w(tile.width * BADGE.padX)}`,
+                  borderRadius: "999cqw",
+                  background: d.background ?? "rgba(255, 255, 255, 0.85)",
+                  color: d.color ?? headlineColor,
+                  fontSize: `${BADGE.fontSize * 100}cqw`,
+                  lineHeight: 1.2,
+                  fontWeight: BADGE.weight,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {d.text[locale] ?? ""}
+              </div>
+            );
+          case "image":
+            return (
+              <img
+                key={key}
+                src={`/${d.src}`}
+                alt=""
+                draggable={false}
+                style={{
+                  position: "absolute",
+                  left: w(tile.width * d.x),
+                  top: h(tile.height * d.y),
+                  width: w(tile.width * d.width),
+                  height: "auto",
+                  opacity:
+                    d.opacity !== undefined ? Math.max(0, Math.min(1, d.opacity)) : undefined,
+                  transformOrigin: "center",
+                  transform:
+                    [d.rotate ? `rotate(${d.rotate}deg)` : "", d.flip ? "scaleX(-1)" : ""]
+                      .filter(Boolean)
+                      .join(" ") || undefined,
+                  filter: d.shadow
+                    ? `drop-shadow(0 ${w(tile.width * CARD_SHADOW.offsetY)} ${w(tile.width * CARD_SHADOW.blur)} ${CARD_SHADOW.color})`
+                    : undefined,
+                }}
+              />
+            );
+          case "callout": {
+            const which = d.capture ?? "primary";
+            const url = which === "secondary" ? secondCaptureUrl : captureUrl;
+            if (!url) return null;
+            const screen = calloutScreen(devices, tile, geom, which);
+            const g = calloutGeometry(d, tile, screen);
+            return (
+              <div
+                key={key}
+                style={{
+                  position: "absolute",
+                  left: w(g.box.left),
+                  top: h(g.box.top),
+                  width: w(g.box.width),
+                  height: h(g.box.height),
+                  borderRadius: w(g.radius),
+                  overflow: "hidden",
+                  transformOrigin: "center",
+                  transform: d.rotate ? `rotate(${d.rotate}deg)` : undefined,
+                  boxShadow:
+                    d.shadow !== false
+                      ? `0 ${w(tile.width * CARD_SHADOW.offsetY)} ${w(tile.width * CARD_SHADOW.blur)} ${CARD_SHADOW.color}`
+                      : undefined,
+                  border: d.border ? `${w(tile.width * 0.004)} solid ${d.border}` : undefined,
+                  background: "#fff",
+                }}
+              >
+                <img
+                  src={`/${url}`}
+                  alt=""
+                  draggable={false}
+                  style={{
+                    position: "absolute",
+                    left: w(g.image.left - g.box.left),
+                    top: h(g.image.top - g.box.top),
+                    width: w(g.image.width),
+                    height: h(g.image.height),
+                  }}
+                />
+              </div>
+            );
+          }
+          case "bubble": {
+            const text = d.text[locale] ?? "";
+            const size = tile.width * (d.size ?? 0.045);
+            const family = d.font === "script" ? scriptFamily : fontFamily;
+            return (
+              <div
+                key={key}
+                style={{
+                  position: "absolute",
+                  left: w(tile.width * d.x),
+                  top: h(tile.height * d.y),
+                  maxWidth: w(tile.width * d.width),
+                  transformOrigin: "center",
+                  transform: d.rotate ? `rotate(${d.rotate}deg)` : undefined,
+                }}
+              >
+                <div
+                  style={{
+                    position: "relative",
+                    display: "inline-block",
+                    maxWidth: "100%",
+                    background: d.background ?? "#FFFFFF",
+                    color: d.color ?? headlineColor,
+                    fontFamily: family,
+                    fontWeight: 700,
+                    fontSize: w(size),
+                    lineHeight: BUBBLE.lineHeight,
+                    padding: `${w(size * BUBBLE.padY)} ${w(size * BUBBLE.padX)}`,
+                    borderRadius: w(size * BUBBLE.radius),
+                    boxShadow: `0 ${w(tile.width * CARD_SHADOW.offsetY * 0.6)} ${w(tile.width * CARD_SHADOW.blur * 0.6)} ${CARD_SHADOW.color}`,
+                    whiteSpace: "pre-wrap",
+                    textAlign: "center",
+                  }}
+                >
+                  {text}
+                  <BubbleTail tail={d.tail ?? "bottom-left"} size={w(size * BUBBLE.tail * 0.9)} />
+                </div>
+              </div>
+            );
+          }
+          case "rating": {
+            const label = d.label ? d.label[locale] : undefined;
+            const left = tile.width * d.x;
+            const top = tile.height * d.y;
+            const width = tile.width * d.width;
+            const g = ratingGeometry({ left, top, width, height: 0 }, Boolean(label));
+            const color = d.color ?? headlineColor;
+            return (
+              <svg
+                key={key}
+                aria-hidden
+                viewBox={`${left} ${top} ${width} ${g.height}`}
+                style={{
+                  position: "absolute",
+                  left: w(left),
+                  top: h(top),
+                  width: w(width),
+                  height: h(g.height),
+                  overflow: "visible",
+                }}
+              >
+                {d.background ? (
+                  <rect
+                    x={g.plate.left}
+                    y={g.plate.top}
+                    width={g.plate.width}
+                    height={g.plate.height}
+                    rx={g.plate.radius}
+                    fill={d.background}
+                  />
+                ) : null}
+                {d.laurels !== false
+                  ? (["left", "right"] as const).map((side, li) => (
+                      <g key={side}>
+                        <path d={g.laurels[li]!.leaves} fill={color} />
+                        <path
+                          d={g.laurels[li]!.stem}
+                          fill="none"
+                          stroke={color}
+                          strokeWidth={g.laurelStroke}
+                          strokeLinecap="round"
+                        />
+                      </g>
+                    ))
+                  : null}
+                <text
+                  x={g.value.x}
+                  y={g.value.y}
+                  fontSize={g.value.size}
+                  fontWeight={800}
+                  fill={color}
+                  fontFamily={fontFamily}
+                  textAnchor="middle"
+                  dominantBaseline="hanging"
+                >
+                  {d.value}
+                </text>
+                {g.stars.map((s, si) => (
+                  // biome-ignore lint/suspicious/noArrayIndexKey: static star row
+                  <path key={si} d={s} fill={color} />
+                ))}
+                {label && g.label ? (
+                  <text
+                    x={g.label.x}
+                    y={g.label.y}
+                    fontSize={g.label.size}
+                    fontWeight={600}
+                    fill={color}
+                    fontFamily={fontFamily}
+                    textAnchor="middle"
+                    dominantBaseline="hanging"
+                  >
+                    {label}
+                  </text>
+                ) : null}
+              </svg>
+            );
+          }
+          default:
+            return null;
+        }
+      })}
     </>
   );
+}
+
+/** A simple CSS triangle at a bubble's tail corner; `size` is the triangle's half-width/height, in cqw. */
+function BubbleTail({
+  tail,
+  size,
+}: {
+  tail: "bottom-left" | "bottom-right" | "top-left" | "top-right" | "none";
+  size: string;
+}) {
+  if (tail === "none") return null;
+  const bottom = tail.startsWith("bottom");
+  const onLeft = tail.endsWith("left");
+  return (
+    <span
+      aria-hidden
+      style={{
+        position: "absolute",
+        [onLeft ? "left" : "right"]: `${BUBBLE.tailInset * 100}%`,
+        [bottom ? "top" : "bottom"]: "100%",
+        width: 0,
+        height: 0,
+        borderLeft: `${size} solid transparent`,
+        borderRight: `${size} solid transparent`,
+        borderTop: bottom ? `${size} solid currentColor` : undefined,
+        borderBottom: !bottom ? `${size} solid currentColor` : undefined,
+        color: "inherit",
+      }}
+    />
+  );
+}
+
+/**
+ * The headline: `*word*` emphasis markup rendered per the theme's style when
+ * blurred, and the raw text (asterisks visible) in a plain contentEditable
+ * field while focused, so editing keeps the markers round-trippable through
+ * goldie.design.json. Non-editable (grid thumbnails) always renders the rich
+ * text.
+ */
+function Headline({
+  text,
+  locale,
+  uppercase,
+  emphasis,
+  accent,
+  scriptFamily,
+  headlineSizeCqw,
+  color,
+  fontSize,
+  lineHeight,
+  weight,
+  letterSpacing,
+  stroke,
+  shadow,
+  onEdit,
+}: {
+  text: string;
+  locale: string;
+  uppercase: boolean | undefined;
+  emphasis: EmphasisStyle;
+  accent: string;
+  scriptFamily: string;
+  /** The headline font size, in cqw (a plain number); scales the script and mark sizes. */
+  headlineSizeCqw: number;
+  color: string;
+  fontSize: string;
+  lineHeight: number;
+  weight: number;
+  letterSpacing: string;
+  stroke: { color: string; widthCqw: number } | undefined;
+  shadow: { color: string; blurCqw: number; offsetYCqw: number } | undefined;
+  onEdit?: (text: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const ref = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    if (editing) ref.current?.focus();
+  }, [editing]);
+
+  const richStyle: React.CSSProperties = {
+    margin: 0,
+    color,
+    fontSize,
+    lineHeight,
+    fontWeight: weight,
+    letterSpacing,
+    WebkitTextStroke: stroke ? `${stroke.widthCqw}cqw ${stroke.color}` : undefined,
+    paintOrder: stroke ? "stroke fill" : undefined,
+    textShadow: shadow
+      ? `0 ${shadow.offsetYCqw}cqw ${shadow.blurCqw}cqw ${shadow.color}`
+      : undefined,
+  };
+
+  const rich = renderHeadlineRuns(text, {
+    uppercase,
+    locale,
+    emphasis,
+    accent,
+    scriptFamily,
+    headlineSizeCqw,
+  });
+
+  if (!onEdit) return <h1 style={richStyle}>{rich}</h1>;
+
+  if (editing) {
+    return (
+      <h1
+        ref={ref}
+        style={{ margin: 0, color, fontSize, lineHeight, fontWeight: weight, letterSpacing }}
+        {...editableHeadlineProps(onEdit, () => setEditing(false), text)}
+      >
+        {text}
+      </h1>
+    );
+  }
+
+  return (
+    <h1 style={richStyle} {...focusToEditProps(() => setEditing(true), "Headline")}>
+      {rich}
+    </h1>
+  );
+}
+
+/**
+ * Splits `*word*` markup into runs and renders each per the theme's emphasis
+ * style: a plain accent color, the script face, a highlighter band, or a
+ * hand-drawn underline/circle traced over the word in an inline SVG. Mirrors
+ * drawBlock in src/draw.ts.
+ */
+function renderHeadlineRuns(
+  text: string,
+  opts: {
+    uppercase: boolean | undefined;
+    locale: string;
+    emphasis: EmphasisStyle;
+    accent: string;
+    scriptFamily: string;
+    headlineSizeCqw: number;
+  },
+): ReactNode[] {
+  const upper = (s: string) => (opts.uppercase ? s.toLocaleUpperCase(opts.locale) : s);
+  const runs: Run[] = mapRuns(parseEmphasis(text), upper);
+  const wordBoxHeightCqw = opts.headlineSizeCqw * 0.86;
+  let markIndex = 0;
+  // Runs are a stable parse of this one headline string, in order; the index
+  // is a fine key.
+  return runs.map((r, i) => {
+    // biome-ignore lint/suspicious/noArrayIndexKey: stable parse of one fixed string
+    if (!r.em) return <Fragment key={i}>{r.text}</Fragment>;
+    const seed = markIndex++;
+    switch (opts.emphasis) {
+      case "script":
+        return (
+          <span
+            // biome-ignore lint/suspicious/noArrayIndexKey: stable parse of one fixed string
+            key={i}
+            style={{
+              color: opts.accent,
+              fontFamily: opts.scriptFamily,
+              fontWeight: TYPE.kickerWeight,
+              fontSize: `${opts.headlineSizeCqw * 1.14}cqw`,
+            }}
+          >
+            {r.text}
+          </span>
+        );
+      case "highlight":
+        return (
+          // biome-ignore lint/suspicious/noArrayIndexKey: stable parse of one fixed string
+          <span key={i} style={{ position: "relative", display: "inline-block" }}>
+            <span
+              aria-hidden
+              style={{
+                position: "absolute",
+                left: `${-HIGHLIGHT.padX * 100}%`,
+                width: `${(1 + 2 * HIGHLIGHT.padX) * 100}%`,
+                top: `${HIGHLIGHT.top * 100}%`,
+                height: `${HIGHLIGHT.height * 100}%`,
+                background: opts.accent,
+                opacity: HIGHLIGHT.alpha,
+              }}
+            />
+            <span style={{ position: "relative" }}>{r.text}</span>
+          </span>
+        );
+      case "underline":
+      case "circle": {
+        const d =
+          opts.emphasis === "circle"
+            ? circleMarkPath(MARK_BOX, 7 + seed)
+            : underlineMarkPath(MARK_BOX, 3 + seed);
+        const strokeWidth = `${MARK_STROKE[opts.emphasis] * wordBoxHeightCqw}cqw`;
+        return (
+          // biome-ignore lint/suspicious/noArrayIndexKey: stable parse of one fixed string
+          <span key={i} style={{ position: "relative", display: "inline-block" }}>
+            {r.text}
+            <svg
+              viewBox="0 0 100 100"
+              preserveAspectRatio="none"
+              aria-hidden
+              style={{
+                position: "absolute",
+                left: 0,
+                top: "6%",
+                width: "100%",
+                height: "86%",
+                overflow: "visible",
+                pointerEvents: "none",
+              }}
+            >
+              <path
+                d={d}
+                fill="none"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                vectorEffect="non-scaling-stroke"
+                style={{ stroke: opts.accent, strokeWidth }}
+              />
+            </svg>
+          </span>
+        );
+      }
+      default:
+        return (
+          // biome-ignore lint/suspicious/noArrayIndexKey: stable parse of one fixed string
+          <span key={i} style={{ color: opts.accent }}>
+            {r.text}
+          </span>
+        );
+    }
+  });
 }
 
 /**
@@ -1032,6 +1652,39 @@ function editableProps(commit: (text: string) => void, current: string, label: s
         e.currentTarget.blur();
       }
     },
+  };
+}
+
+/**
+ * Props for the headline's editing field: like editableProps, but always
+ * leaves edit mode on blur (not only when the text changed), so an unedited
+ * blur still returns to the rendered, emphasis-aware preview.
+ */
+function editableHeadlineProps(
+  commit: (text: string) => void,
+  stopEditing: () => void,
+  current: string,
+) {
+  const base = editableProps(commit, current, "Headline");
+  return {
+    ...base,
+    onBlur: (e: React.FocusEvent<HTMLElement>) => {
+      base.onBlur(e);
+      stopEditing();
+    },
+  };
+}
+
+/** Props that turn a rendered (non-editing) headline into a focusable field that starts editing. */
+function focusToEditProps(startEditing: () => void, label: string) {
+  return {
+    role: "textbox",
+    "aria-label": label,
+    "data-placeholder": label,
+    tabIndex: 0,
+    className: "editable-copy",
+    onClick: startEditing,
+    onFocus: startEditing,
   };
 }
 

@@ -1,5 +1,17 @@
 /** Mirrors the StoreManifest that `goldie manifest` writes to out/store.json. */
 
+/** Mirrors EmphasisStyle in src/config.ts: how *stressed* headline words stand out. */
+export type EmphasisStyle = "color" | "highlight" | "underline" | "circle" | "script";
+
+/** Mirrors HeadlineStyle in src/config.ts. */
+export type HeadlineStyle = {
+  scale?: number;
+  weight?: number;
+  uppercase?: boolean;
+  stroke?: { color: string; width: number };
+  shadow?: { color: string; blur: number; offsetY: number };
+};
+
 export type Theme = {
   background: string;
   headlineColor: string;
@@ -9,9 +21,23 @@ export type Theme = {
   copyHeightRatio: number;
   /** Fraction of the frame width the device bezel occupies. */
   deviceWidthRatio: number;
+  /** Color of *stressed* headline words, their marks, and kickers. Defaults to headlineColor. */
+  accentColor?: string;
+  /** How *stressed* headline words stand out. Default "color". */
+  emphasis?: EmphasisStyle;
+  /** Font stack for kickers, script emphasis and script bubbles. Defaults to the bundled Caveat. */
+  scriptFontFamily?: string;
+  headline?: HeadlineStyle;
+  /** An image cover-fitted over every tile's background; a url under out/web. */
+  backgroundImage?: string;
+  /** One wide image laid across the whole strip; a url under out/web. */
+  backdrop?: string;
 };
 
-/** Mirrors Decoration in src/config.ts; image `src` values are urls under out/web. */
+/** Mirrors DecorationLayer in src/config.ts. */
+export type DecorationLayer = "back" | "front";
+
+/** Mirrors Decoration in src/config.ts; image/path `src` values are urls under out/web. */
 export type Decoration =
   | {
       kind: "badge";
@@ -19,8 +45,59 @@ export type Decoration =
       position: "top-left" | "top-right" | "bottom-left" | "bottom-right";
       background?: string;
       color?: string;
+      layer?: DecorationLayer;
     }
-  | { kind: "image"; src: string; x: number; y: number; width: number; rotate?: number };
+  | {
+      kind: "image";
+      src: string;
+      x: number;
+      y: number;
+      width: number;
+      rotate?: number;
+      flip?: boolean;
+      opacity?: number;
+      shadow?: boolean;
+      layer?: DecorationLayer;
+    }
+  | {
+      kind: "callout";
+      capture?: "primary" | "secondary";
+      from: { x: number; y: number; width: number; height: number };
+      x: number;
+      y: number;
+      width: number;
+      rotate?: number;
+      radius?: number;
+      shadow?: boolean;
+      border?: string;
+      layer?: DecorationLayer;
+    }
+  | {
+      kind: "bubble";
+      text: Record<string, string>;
+      x: number;
+      y: number;
+      width: number;
+      tail?: "bottom-left" | "bottom-right" | "top-left" | "top-right" | "none";
+      background?: string;
+      color?: string;
+      font?: "sans" | "script";
+      size?: number;
+      rotate?: number;
+      layer?: DecorationLayer;
+    }
+  | {
+      kind: "rating";
+      value: string;
+      label?: Record<string, string>;
+      x: number;
+      y: number;
+      width: number;
+      color?: string;
+      laurels?: boolean;
+      background?: string;
+      layer?: DecorationLayer;
+    };
 
 export type LayoutEntry = { key: string; label: string; description: string; span: number };
 export type TemplateEntry = { key: string; label: string; description: string; sequence: string[] };
@@ -54,6 +131,12 @@ export type DesignScene = {
   id: string;
   headline: Record<string, string>;
   subhead?: Record<string, string>;
+  /** A short handwritten line above the headline, per locale. */
+  kicker?: Record<string, string>;
+  /** The scene's own CSS background, overriding the theme's. */
+  background?: string;
+  /** Url under out/web, or "none" to clear the theme's backgroundImage. */
+  backgroundImage?: string;
   layout?: string;
   secondScene?: string;
   decorations?: Decoration[];
@@ -115,6 +198,10 @@ export type StoreManifest = {
   devices: DeviceEntry[];
   locales: string[];
   design: Design;
+  /** Rendered social promo videos (`goldie promo`), under out/promo. Absent in older manifests. */
+  promo?: Array<{ format: string; locale: string; url: string; durationSeconds: number }>;
+  /** Art-direction concept boards (`goldie concepts`), under out/concepts. Absent in older manifests. */
+  concepts?: Array<{ style: string; label: string; url: string }>;
 };
 
 /** A load failure with the CLI command that fixes it, for the empty state. */

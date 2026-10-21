@@ -1,5 +1,7 @@
 import {
+  ClapperboardIcon,
   GalleryHorizontalIcon,
+  ImagesIcon,
   LayoutGridIcon,
   type LucideIcon,
   MoonIcon,
@@ -36,6 +38,9 @@ const DEVICE_TYPES: Array<{ key: DeviceType; icon: LucideIcon; label: string }> 
   { key: "android", icon: PlayIcon, label: "Android" },
 ];
 
+/** What the stage shows: the composited strip, the promo video, or the concept boards. */
+export type Stage = "strip" | "promo" | "concepts";
+
 /**
  * The left rail: the goldie wordmark with the view (one paged row or a
  * wrapping grid) and appearance toggles, what the strip shows (device and
@@ -54,6 +59,8 @@ export function Sidebar({
   onDark,
   view,
   onView,
+  stage,
+  onStage,
   background,
   frame,
   frames,
@@ -80,6 +87,9 @@ export function Sidebar({
   /** How the tiles are laid out on the stage. */
   view: StripView;
   onView: (v: StripView) => void;
+  /** Which of the strip, the promo video or the concept boards the stage shows. */
+  stage: Stage;
+  onStage: (v: Stage) => void;
   background: string;
   /** The bezel variant of the device on show, and every device's. */
   frame: string;
@@ -96,6 +106,8 @@ export function Sidebar({
   onScreenOnly: (v: boolean) => void;
 }) {
   const typeDevices = manifest.devices.filter((d) => d.type === deviceType);
+  const hasPromo = (manifest.promo?.length ?? 0) > 0;
+  const hasConcepts = (manifest.concepts?.length ?? 0) > 0;
   return (
     <aside className="flex w-[300px] shrink-0 flex-col overflow-hidden rounded-2xl border border-sidebar-border bg-sidebar text-sidebar-foreground">
       <header className="flex h-14 shrink-0 items-center justify-between pr-3 pl-5">
@@ -104,15 +116,17 @@ export function Sidebar({
         </h1>
         <div className="flex items-center gap-1">
           {/* Like the appearance button: shows the view a click switches to. */}
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => onView(view === "grid" ? "strip" : "grid")}
-            aria-label={view === "grid" ? "Switch to strip view" : "Switch to grid view"}
-            title={view === "grid" ? "Strip view" : "Grid view"}
-          >
-            {view === "grid" ? <GalleryHorizontalIcon /> : <LayoutGridIcon />}
-          </Button>
+          {stage === "strip" ? (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => onView(view === "grid" ? "strip" : "grid")}
+              aria-label={view === "grid" ? "Switch to strip view" : "Switch to grid view"}
+              title={view === "grid" ? "Strip view" : "Grid view"}
+            >
+              {view === "grid" ? <GalleryHorizontalIcon /> : <LayoutGridIcon />}
+            </Button>
+          ) : null}
           <Button
             variant="ghost"
             size="icon-sm"
@@ -123,6 +137,32 @@ export function Sidebar({
           </Button>
         </div>
       </header>
+
+      {hasPromo || hasConcepts ? (
+        <div className="flex shrink-0 gap-1 px-5 pb-1">
+          <StageTab
+            label="Screenshots"
+            active={stage === "strip"}
+            onClick={() => onStage("strip")}
+          />
+          {hasPromo ? (
+            <StageTab
+              label="Promo"
+              icon={ClapperboardIcon}
+              active={stage === "promo"}
+              onClick={() => onStage("promo")}
+            />
+          ) : null}
+          {hasConcepts ? (
+            <StageTab
+              label="Concepts"
+              icon={ImagesIcon}
+              active={stage === "concepts"}
+              onClick={() => onStage("concepts")}
+            />
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="sidebar-scroll flex-1 overflow-y-auto">
         {/* Every tab always shows, so an iPhone-only setup still surfaces that
@@ -177,25 +217,27 @@ export function Sidebar({
             ) : null}
           </div>
         ) : null}
-        <DesignPanel
-          design={manifest.design}
-          device={device}
-          deviceFrame={
-            deviceType === "android" || Boolean(typeDevices.find((d) => d.key === device)?.frame)
-          }
-          background={background}
-          frame={frame}
-          fontFamily={fontFamily}
-          template={template}
-          layout={layout}
-          screenOnly={screenOnly}
-          onBackground={onBackground}
-          onFrame={onFrame}
-          onFontFamily={onFontFamily}
-          onTemplate={onTemplate}
-          onLayout={onLayout}
-          onScreenOnly={onScreenOnly}
-        />
+        {stage === "strip" ? (
+          <DesignPanel
+            design={manifest.design}
+            device={device}
+            deviceFrame={
+              deviceType === "android" || Boolean(typeDevices.find((d) => d.key === device)?.frame)
+            }
+            background={background}
+            frame={frame}
+            fontFamily={fontFamily}
+            template={template}
+            layout={layout}
+            screenOnly={screenOnly}
+            onBackground={onBackground}
+            onFrame={onFrame}
+            onFontFamily={onFontFamily}
+            onTemplate={onTemplate}
+            onLayout={onLayout}
+            onScreenOnly={onScreenOnly}
+          />
+        ) : null}
       </div>
 
       <footer className="shrink-0 bg-sidebar p-4">
@@ -220,6 +262,36 @@ export function Sidebar({
 function fontKey(design: StoreManifest["design"], fontFamily: string): string | undefined {
   if (fontFamily === design.theme.fontFamily) return undefined;
   return design.fonts.find((f) => fontFamily.startsWith(`"${f.family}"`))?.key ?? "system";
+}
+
+/** One tab in the sidebar's stage switcher (screenshots, promo, concepts). */
+function StageTab({
+  label,
+  icon: Icon,
+  active,
+  onClick,
+}: {
+  label: string;
+  icon?: LucideIcon;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      className={cn(
+        "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+        active
+          ? "bg-muted text-foreground"
+          : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+      )}
+    >
+      {Icon ? <Icon className="size-3.5" aria-hidden /> : null}
+      {label}
+    </button>
+  );
 }
 
 export function Field({
