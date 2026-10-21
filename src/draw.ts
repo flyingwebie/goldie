@@ -29,6 +29,9 @@ import { mapRuns, parseEmphasis, type RichLine, wrapRuns } from "./richtext.ts";
 /** The script face behind kickers, script emphasis and script bubbles when the theme names none. */
 export const DEFAULT_SCRIPT_FONT = '"Caveat", cursive';
 
+/** A layer's rest position in canvas pixels; also the pivot box for its motion. */
+export type Box = { left: number; top: number; width: number; height: number };
+
 /** How far along a layer is: everything at rest is the identity. */
 export type LayerState = {
   opacity?: number;
@@ -79,23 +82,30 @@ export type SceneInput = {
   geom: FrameGeometry;
 };
 
+/** Full-canvas box of a composition; the pivot for the background layer and the frame every raster layer is exported at. */
+export function canvasBox(c: { width: number; height: number }): Box {
+  return { left: 0, top: 0, width: c.width, height: c.height };
+}
+
+/** Draws the backgroundImage or backdrop slice, at rest, if either is set. Used standalone by drawScene and in isolation by sceneLayers. */
+function drawBackgroundImage(ctx: SKRSContext2D, s: SceneInput): void {
+  const { c } = s;
+  if (s.backgroundImage) {
+    drawCover(ctx, s.backgroundImage, 0, 0, c.width, c.height);
+  } else if (s.backdrop) {
+    const { image, slot, totalSlots } = s.backdrop;
+    drawCover(ctx, image, -slot * s.tile.width, 0, totalSlots * s.tile.width, c.height);
+  }
+}
+
 export function drawScene(ctx: SKRSContext2D, s: SceneInput, motion: Motion = {}): void {
   const { c } = s;
   if (!isTransparent(s.background)) {
     ctx.fillStyle = paint(ctx, s.background, c.width, c.height);
     ctx.fillRect(0, 0, c.width, c.height);
   }
-  const bgBox = { left: 0, top: 0, width: c.width, height: c.height };
-  if (s.backgroundImage) {
-    withState(ctx, motion.background, bgBox, () =>
-      drawCover(ctx, s.backgroundImage!, 0, 0, c.width, c.height),
-    );
-  }
-  if (s.backdrop) {
-    const { image, slot, totalSlots } = s.backdrop;
-    withState(ctx, motion.background, bgBox, () =>
-      drawCover(ctx, image, -slot * s.tile.width, 0, totalSlots * s.tile.width, c.height),
-    );
+  if (s.backgroundImage || s.backdrop) {
+    withState(ctx, motion.background, canvasBox(c), () => drawBackgroundImage(ctx, s));
   }
 
   const scrim = s.theme.scrim;
@@ -197,6 +207,51 @@ function drawCopy(ctx: SKRSContext2D, s: SceneInput, motion: Motion) {
   }
 }
 
+/** One copy line, ready to draw in isolation: its block, text runs and rest box. */
+export type CopyLineLayout = {
+  block: Block;
+  line: RichLine;
+  blockKind: Block["kind"];
+  index: number;
+  box: Box;
+  /** Whether this line has at least one *emphasised* word. */
+  hasEmphasis: boolean;
+};
+
+/**
+ * Every copy line's box, laid out top to bottom exactly as drawCopy/drawBlock
+ * do, without drawing anything. Used by the promo's layer enumerator so a
+ * line's isolated PNG and its live-drawn counterpart share one geometry.
+ */
+export function copyLineLayouts(ctx: SKRSContext2D, s: SceneInput): CopyLineLayout[] {
+  const copy = s.c.copy;
+  if (!copy) return [];
+  const blocks = copyBlocks(ctx, s);
+  const gap = s.c.height * TYPE.gap;
+  const total =
+    blocks.reduce((sum, bl) => sum + bl.lines.length * bl.size * bl.lineHeight, 0) +
+    gap * (blocks.length - 1);
+  let y = copy.position === "top" ? copy.y : copy.y - total;
+  const out: CopyLineLayout[] = [];
+  for (const b of blocks) {
+    const step = b.size * b.lineHeight;
+    b.lines.forEach((line, index) => {
+      const box = lineBox(ctx, b, line, copy.x, y, copy.align);
+      out.push({
+        block: b,
+        line,
+        blockKind: b.kind,
+        index,
+        box,
+        hasEmphasis: line.some((seg) => seg.em),
+      });
+      y += step;
+    });
+    y += gap;
+  }
+  return out;
+}
+
 /** Font, color and wrapped lines of each copy block; shared with the promo for timing. */
 export function copyBlocks(ctx: SKRSContext2D, s: SceneInput): Block[] {
   const copy = s.c.copy!;
@@ -268,6 +323,131 @@ export function copyBlocks(ctx: SKRSContext2D, s: SceneInput): Block[] {
   return blocks;
 }
 
+/**
+ * A line's box, measured the same way drawBlock lays it out: `top`/`height`
+ * span the full line box (lineHeight included), `left`/`width` the glyphs'
+ * own run at that alignment. Shared with the promo's layer enumerator, so a
+ * layer's pivot box is exactly the box its content is drawn into.
+ */
+function lineBox(
+  ctx: SKRSContext2D,
+  b: Block,
+  line: RichLine,
+  x: number,
+  top: number,
+  align: "left" | "center",
+): Box {
+  const widths = line.map((seg) => {
+    ctx.font = b.font(seg.em);
+    ctx.letterSpacing = `${b.letterSpacing}px`;
+    return ctx.measureText(seg.text).width;
+  });
+  const lineWidth = widths.reduce((a, w) => a + w, 0);
+  const left = align === "center" ? x - lineWidth / 2 : x;
+  return { left, top, width: lineWidth, height: b.size * b.lineHeight };
+}
+
+/** Each emphasised word's left/width within a line, measured in its own box. */
+function lineMarks(
+  ctx: SKRSContext2D,
+  b: Block,
+  line: RichLine,
+  box: Box,
+): Array<{ left: number; width: number }> {
+  let cursor = box.left;
+  const marks: Array<{ left: number; width: number }> = [];
+  for (const seg of line) {
+    ctx.font = b.font(seg.em);
+    ctx.letterSpacing = `${b.letterSpacing}px`;
+    const w = ctx.measureText(seg.text).width;
+    if (seg.em && b.kind === "headline") marks.push({ left: cursor, width: w });
+    cursor += w;
+  }
+  return marks;
+}
+
+/** Draws one line's glyphs only, no marks, at its rest box. */
+function drawLineText(ctx: SKRSContext2D, s: SceneInput, b: Block, line: RichLine, box: Box): void {
+  const hs = b.kind === "headline" ? (s.theme.headline ?? {}) : {};
+  const glyphTop = box.top + (box.height - b.size) / 2;
+  let cursor = box.left;
+  ctx.textBaseline = "top";
+  ctx.textAlign = "left";
+  for (const seg of line) {
+    // A script word sits on the same baseline as the sans run around it.
+    const segSize = fontSize(b.font(seg.em));
+    const segTop = glyphTop + (b.size - segSize) * 0.78;
+    ctx.font = b.font(seg.em);
+    ctx.letterSpacing = `${b.letterSpacing}px`;
+    const w = ctx.measureText(seg.text).width;
+    if (hs.stroke) {
+      ctx.save();
+      ctx.lineJoin = "round";
+      ctx.lineWidth = s.tile.width * hs.stroke.width * 2;
+      ctx.strokeStyle = hs.stroke.color;
+      applyShadow(ctx, hs.shadow, s.tile.width);
+      ctx.strokeText(seg.text, cursor, segTop);
+      ctx.restore();
+    }
+    ctx.save();
+    if (!hs.stroke) applyShadow(ctx, hs.shadow, s.tile.width);
+    ctx.fillStyle = b.color(seg.em);
+    ctx.fillText(seg.text, cursor, segTop);
+    ctx.restore();
+    cursor += w;
+  }
+}
+
+/**
+ * Draws one line's hand-drawn emphasis mark only (no glyphs): the highlighter
+ * band ("under", drawn before the text) or the circle/underline pen stroke
+ * ("over", drawn after it), at `progress` (0-1) of the mark's reveal.
+ */
+function drawLineMarks(
+  ctx: SKRSContext2D,
+  s: SceneInput,
+  b: Block,
+  line: RichLine,
+  box: Box,
+  place: "under" | "over",
+  progress: number,
+): void {
+  if (b.kind !== "headline") return;
+  const { theme } = s;
+  const emphasis: EmphasisStyle = theme.emphasis ?? "color";
+  const accent = theme.accentColor ?? s.headlineColor;
+  const glyphTop = box.top + (box.height - b.size) / 2;
+  const marks = lineMarks(ctx, b, line, box);
+  if (place === "under" && emphasis === "highlight") {
+    ctx.save();
+    ctx.fillStyle = accent;
+    ctx.globalAlpha *= HIGHLIGHT.alpha;
+    for (const m of marks) {
+      const pad = m.width * HIGHLIGHT.padX;
+      ctx.fillRect(
+        m.left - pad,
+        glyphTop + b.size * HIGHLIGHT.top,
+        (m.width + 2 * pad) * clamp01(progress),
+        b.size * HIGHLIGHT.height,
+      );
+    }
+    ctx.restore();
+  }
+  if (place === "over" && (emphasis === "circle" || emphasis === "underline")) {
+    for (const [i, m] of marks.entries()) {
+      const wordBox = {
+        left: m.left,
+        top: glyphTop + b.size * 0.06,
+        width: m.width,
+        height: b.size * 0.86,
+      };
+      const d =
+        emphasis === "circle" ? circleMarkPath(wordBox, 7 + i) : underlineMarkPath(wordBox, 3 + i);
+      strokeMark(ctx, d, accent, wordBox.height * MARK_STROKE[emphasis], progress);
+    }
+  }
+}
+
 /** Draws a block's lines from `y` down, with its marks. Returns the y below the last line. */
 function drawBlock(
   ctx: SKRSContext2D,
@@ -278,92 +458,14 @@ function drawBlock(
   align: "left" | "center",
   motion: Motion,
 ): number {
-  const { theme } = s;
-  const emphasis: EmphasisStyle = theme.emphasis ?? "color";
-  const accent = theme.accentColor ?? s.headlineColor;
-  const hs = b.kind === "headline" ? (theme.headline ?? {}) : {};
   const step = b.size * b.lineHeight;
-  ctx.textBaseline = "top";
-  ctx.textAlign = "left";
-
   b.lines.forEach((line, index) => {
-    // Measure each segment in its own face so the line centres as drawn.
-    const widths = line.map((seg) => {
-      ctx.font = b.font(seg.em);
-      ctx.letterSpacing = `${b.letterSpacing}px`;
-      return ctx.measureText(seg.text).width;
-    });
-    const lineWidth = widths.reduce((a, w) => a + w, 0);
-    const left = align === "center" ? x - lineWidth / 2 : x;
-    const glyphTop = y + (step - b.size) / 2;
-    const box = { left, top: y, width: lineWidth, height: step };
-
+    const box = lineBox(ctx, b, line, x, y, align);
     withState(ctx, motion.copyLine?.(b.kind, index), box, () => {
-      let cursor = left;
-      const marks: Array<{ left: number; width: number }> = [];
-      line.forEach((seg, i) => {
-        const w = widths[i]!;
-        if (seg.em && b.kind === "headline") marks.push({ left: cursor, width: w });
-        cursor += w;
-      });
-
-      // Highlighter bands go under the text.
-      if (b.kind === "headline" && emphasis === "highlight") {
-        ctx.save();
-        ctx.fillStyle = accent;
-        ctx.globalAlpha *= HIGHLIGHT.alpha;
-        for (const m of marks) {
-          const pad = m.width * HIGHLIGHT.padX;
-          ctx.fillRect(
-            m.left - pad,
-            glyphTop + b.size * HIGHLIGHT.top,
-            (m.width + 2 * pad) * clamp01(motion.marks ?? 1),
-            b.size * HIGHLIGHT.height,
-          );
-        }
-        ctx.restore();
-      }
-
-      cursor = left;
-      line.forEach((seg, i) => {
-        // A script word sits on the same baseline as the sans run around it.
-        const segSize = fontSize(b.font(seg.em));
-        const segTop = glyphTop + (b.size - segSize) * 0.78;
-        ctx.font = b.font(seg.em);
-        ctx.letterSpacing = `${b.letterSpacing}px`;
-        if (hs.stroke) {
-          ctx.save();
-          ctx.lineJoin = "round";
-          ctx.lineWidth = s.tile.width * hs.stroke.width * 2;
-          ctx.strokeStyle = hs.stroke.color;
-          applyShadow(ctx, hs.shadow, s.tile.width);
-          ctx.strokeText(seg.text, cursor, segTop);
-          ctx.restore();
-        }
-        ctx.save();
-        if (!hs.stroke) applyShadow(ctx, hs.shadow, s.tile.width);
-        ctx.fillStyle = b.color(seg.em);
-        ctx.fillText(seg.text, cursor, segTop);
-        ctx.restore();
-        cursor += widths[i]!;
-      });
-
-      // Pen marks go over the text.
-      if (b.kind === "headline" && (emphasis === "circle" || emphasis === "underline")) {
-        for (const [i, m] of marks.entries()) {
-          const wordBox = {
-            left: m.left,
-            top: glyphTop + b.size * 0.06,
-            width: m.width,
-            height: b.size * 0.86,
-          };
-          const d =
-            emphasis === "circle"
-              ? circleMarkPath(wordBox, 7 + i)
-              : underlineMarkPath(wordBox, 3 + i);
-          strokeMark(ctx, d, accent, wordBox.height * MARK_STROKE[emphasis], motion.marks ?? 1);
-        }
-      }
+      const progress = clamp01(motion.marks ?? 1);
+      drawLineMarks(ctx, s, b, line, box, "under", progress);
+      drawLineText(ctx, s, b, line, box);
+      drawLineMarks(ctx, s, b, line, box, "over", progress);
     });
     y += step;
   });
@@ -624,6 +726,160 @@ function drawDecoration(
       return;
     }
   }
+}
+
+/**
+ * The box a decoration draws into, at rest - the same box `withState` pivots
+ * it around. Badge and image compute it directly; callout, bubble and rating
+ * reuse the pure geometry helpers their own drawing already calls.
+ */
+export function decorationBox(ctx: SKRSContext2D, s: SceneInput, d: Decoration): Box {
+  const { tile } = s;
+  switch (d.kind) {
+    case "badge": {
+      const text = pick(d.text, s.locale, "badge");
+      const font = `${BADGE.weight} ${tile.width * BADGE.fontSize}px ${withGlyphFallback(s.theme.fontFamily)}`;
+      ctx.font = font;
+      ctx.letterSpacing = "0px";
+      const size = fontSize(font);
+      const w = ctx.measureText(text).width + 2 * tile.width * BADGE.padX;
+      const h = size * 1.2 + 2 * tile.width * BADGE.padY;
+      const inset = Math.min(tile.width, tile.height) * BADGE.inset;
+      const left = d.position.endsWith("left") ? inset : s.c.width - inset - w;
+      const top = d.position.startsWith("top") ? inset : s.c.height - inset - h;
+      return { left, top, width: w, height: h };
+    }
+    case "image": {
+      const image = s.images.get(d.src);
+      if (!image) throw new Error(`Decoration image "${d.src}" was not loaded.`);
+      const w = tile.width * d.width;
+      const h = (w * image.height) / image.width;
+      return { left: tile.width * d.x, top: tile.height * d.y, width: w, height: h };
+    }
+    case "callout": {
+      const which = d.capture ?? "primary";
+      const screen = calloutScreen(s, which);
+      return calloutGeometry(d, tile, screen).box;
+    }
+    case "bubble": {
+      const text = pick(d.text, s.locale, "bubble");
+      const size = tile.width * (d.size ?? 0.045);
+      const family = withGlyphFallback(
+        d.font === "script"
+          ? (s.theme.scriptFontFamily ?? DEFAULT_SCRIPT_FONT)
+          : s.theme.fontFamily,
+      );
+      const font = `700 ${size}px ${family}`;
+      return bubbleGeometry(ctx, d, tile, text, font, size).box;
+    }
+    case "rating": {
+      const label = d.label ? pick(d.label, s.locale, "rating label") : undefined;
+      const left = tile.width * d.x;
+      const top = tile.height * d.y;
+      const width = tile.width * d.width;
+      const g = ratingGeometry({ left, top, width, height: 0 }, Boolean(label));
+      return { left, top, width, height: g.height };
+    }
+  }
+}
+
+/**
+ * Every raster layer drawScene paints, back to front, with the box its
+ * motion pivots around - the still screenshot sliced apart for the promo's
+ * HyperFrames composition. Each layer draws only its own content, at rest,
+ * onto a transparent canvas the generator creates for it; composing every
+ * layer back together in this order reproduces drawScene's pixels.
+ *
+ * `ctx` is only a measuring surface here (font metrics for copy and badges);
+ * it is never drawn to.
+ */
+export type SceneLayerMeta =
+  | { kind: "background" }
+  | { kind: "copy-line"; block: "kicker" | "headline" | "subhead"; index: number }
+  | { kind: "marks"; block: "kicker" | "headline" | "subhead"; index: number }
+  | {
+      kind: "decoration";
+      decoIndex: number;
+      side: "back" | "front";
+      order: number;
+      decoration: Decoration;
+    }
+  | { kind: "device"; deviceIndex: number };
+
+export type SceneLayer = {
+  id: string;
+  box: Box;
+  meta: SceneLayerMeta;
+  draw: (ctx: SKRSContext2D) => void;
+};
+
+export function sceneLayers(ctx: SKRSContext2D, s: SceneInput): SceneLayer[] {
+  const { c } = s;
+  const out: SceneLayer[] = [];
+
+  if (s.backgroundImage || s.backdrop) {
+    out.push({
+      id: "bg-image",
+      box: canvasBox(c),
+      meta: { kind: "background" },
+      draw: (target) => drawBackgroundImage(target, s),
+    });
+  }
+
+  if (c.copy) {
+    const emphasis: EmphasisStyle = s.theme.emphasis ?? "color";
+    for (const { block, line, blockKind, index, box, hasEmphasis } of copyLineLayouts(ctx, s)) {
+      const marksUnder = blockKind === "headline" && emphasis === "highlight" && hasEmphasis;
+      const marksOver =
+        blockKind === "headline" &&
+        (emphasis === "circle" || emphasis === "underline") &&
+        hasEmphasis;
+      const markLayer = (): SceneLayer => ({
+        id: `marks-${blockKind}-${index}`,
+        box,
+        meta: { kind: "marks", block: blockKind, index },
+        draw: (target) =>
+          drawLineMarks(target, s, block, line, box, marksUnder ? "under" : "over", 1),
+      });
+      if (marksUnder) out.push(markLayer());
+      out.push({
+        id: `copy-${blockKind}-${index}`,
+        box,
+        meta: { kind: "copy-line", block: blockKind, index },
+        draw: (target) => drawLineText(target, s, block, line, box),
+      });
+      if (marksOver) out.push(markLayer());
+    }
+  }
+
+  const decorations = s.decorations;
+  const sideIndex = (upTo: number, side: "back" | "front") =>
+    decorations.slice(0, upTo).filter((d) => layerOf(d) === side).length;
+  const decorationLayer = (d: Decoration, i: number, side: "back" | "front"): SceneLayer => ({
+    id: `decoration-${side}-${i}`,
+    box: decorationBox(ctx, s, d),
+    meta: { kind: "decoration", decoIndex: i, side, order: sideIndex(i, side), decoration: d },
+    draw: (target) => drawDecoration(target, s, d, undefined),
+  });
+
+  s.decorations.forEach((d, i) => {
+    if (layerOf(d) === "back") out.push(decorationLayer(d, i, "back"));
+  });
+  c.devices.forEach((device, i) => {
+    const capture = device.capture === "secondary" ? s.captures.secondary : s.captures.primary;
+    if (!capture) return;
+    out.push({
+      id: `device-${i}`,
+      box: device.frame,
+      meta: { kind: "device", deviceIndex: i },
+      draw: (target) => drawDevice(target, device, capture, s.bezel, { width: c.designWidth }),
+    });
+  });
+  s.decorations.forEach((d, i) => {
+    if (layerOf(d) === "front") out.push(decorationLayer(d, i, "front"));
+  });
+
+  return out;
 }
 
 /** The screen a callout cuts from: its device's, or the bezel's proportions on a tile without one. */
