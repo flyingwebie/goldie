@@ -138,7 +138,7 @@ export async function runArt(cfg: LoadedConfig, opts: RunArtOpts = {}): Promise<
       { ...art, style: styleKey },
       { storeName: cfg.store.name, storeCategory: cfg.store.category },
     );
-    const model = art.model;
+    const model = quality === "draft" ? (art.draftModel ?? undefined) : art.model;
     const req: ImageRequest = { prompt, aspect, transparent, references, quality, model };
     const hash = computeHash({
       prompt,

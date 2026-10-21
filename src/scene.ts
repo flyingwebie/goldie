@@ -18,7 +18,7 @@ import {
 import type { SceneInput } from "./draw.ts";
 import { registerFonts } from "./fonts.ts";
 import type { FrameGeometry } from "./frame.ts";
-import { compose, type LayoutSpec } from "./layouts.ts";
+import { applyTransform, compose, type LayoutSpec } from "./layouts.ts";
 import { DEVICES, type DeviceKey } from "./specs.ts";
 
 export type PreparedScene = {
@@ -89,11 +89,16 @@ export async function prepareScenes(
   for (const { scene, layout, secondScene } of resolved) {
     const first = slot;
     slot += layout.span;
-    const c = compose(layout, tile, cfg.theme, {
-      screenOnly,
-      geom,
-      copyScale: opts.copyScale ?? spec.copyScale,
-    });
+    // The studio editor's moves apply after compose(), as they do in the studio.
+    const c = applyTransform(
+      compose(layout, tile, cfg.theme, {
+        screenOnly,
+        geom,
+        copyScale: opts.copyScale ?? spec.copyScale,
+      }),
+      cfg.sceneTransforms?.[scene.id],
+      tile,
+    );
     const decorations: Decoration[] = [
       ...(cfg.theme.decorations ?? []),
       ...(scene.decorations ?? []),

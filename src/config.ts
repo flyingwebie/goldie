@@ -11,6 +11,7 @@ import {
   type LayoutKey,
   needsSecondCapture,
   resolveScenes,
+  type SceneTransform,
   TEMPLATE_KEYS,
   type TemplateChoice,
 } from "./layouts.ts";
@@ -241,6 +242,8 @@ export type ArtConfig = {
   provider: "openai" | "fal";
   /** Overrides the provider's default image model. */
   model?: string;
+  /** Overrides the provider's default draft model (concept boards, `--draft`). */
+  draftModel?: string;
   /** A style preset key from src/art/styles.ts, or a free-text art direction. */
   style: string;
   /** Brand colors woven into every prompt, as hex. */
@@ -473,6 +476,8 @@ export type LoadedConfig = GoldieConfig & {
    * baked into `scene.layout` they would outrank every later template choice.
    */
   sceneLayouts?: Record<string, LayoutKey>;
+  /** The studio editor's per-scene moves (goldie.design.json), applied after compose(). */
+  sceneTransforms?: Record<string, SceneTransform>;
 };
 
 /**
@@ -636,6 +641,16 @@ export type DesignOverrides = {
   screenOnly?: boolean;
   /** Layout overrides per screenshot scene id. */
   sceneLayouts?: Record<string, LayoutKey>;
+  /**
+   * Decorations edited in the studio, per screenshot scene id. Once the editor
+   * touches a scene, its list here replaces the config's `scenes[].decorations`
+   * (theme decorations still apply). Image `src` paths are relative to the config.
+   */
+  sceneDecorations?: Record<string, Decoration[]>;
+  /** The editor's moves of each scene's copy block and devices, per screenshot scene id. */
+  sceneTransforms?: Record<string, SceneTransform>;
+  /** AI art choices made in the studio's settings; each overrides the config's `art` field. */
+  art?: { provider?: "openai" | "fal"; model?: string; draftModel?: string; style?: string };
 };
 
 export type SceneCopy = {
@@ -715,6 +730,25 @@ export function applyDesign(cfg: LoadedConfig, design: DesignOverrides): void {
       if (isScreenshot(scene) && key) overrides[scene.id] = checkedLayout(key);
     }
     cfg.sceneLayouts = { ...cfg.sceneLayouts, ...overrides };
+  }
+  if (design.sceneDecorations) {
+    for (const scene of cfg.scenes) {
+      const list = design.sceneDecorations[scene.id];
+      if (isScreenshot(scene) && list) scene.decorations = list;
+    }
+  }
+  if (design.sceneTransforms) {
+    cfg.sceneTransforms = { ...cfg.sceneTransforms, ...design.sceneTransforms };
+  }
+  if (design.art && cfg.art) {
+    const { provider, model, draftModel, style } = design.art;
+    cfg.art = {
+      ...cfg.art,
+      ...(provider ? { provider } : {}),
+      ...(model ? { model } : {}),
+      ...(draftModel ? { draftModel } : {}),
+      ...(style ? { style } : {}),
+    };
   }
 }
 

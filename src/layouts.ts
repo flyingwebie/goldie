@@ -469,3 +469,70 @@ export function compose(
 export function needsSecondCapture(spec: LayoutSpec): boolean {
   return spec.devices.some((d) => d.capture === "secondary");
 }
+
+/**
+ * A nudge the studio editor applied to one element: an offset as fractions of
+ * the tile (dx of its width, dy of its height), a scale about the element's
+ * centre, and degrees added to its rotation. Identity when every field is
+ * missing.
+ */
+export type ElementTransform = { dx?: number; dy?: number; scale?: number; rotate?: number };
+
+/** The editor's adjustments to one scene's copy block and devices (by index, back to front). */
+export type SceneTransform = { copy?: ElementTransform; devices?: ElementTransform[] };
+
+/**
+ * A composition with the editor's adjustments applied. Pure, like compose():
+ * the canvas renderer and the studio both call it after compose(), so a
+ * dragged phone lands in the same place in the export. Copy scales by its
+ * type width and wrap width; devices scale and rotate about their centre.
+ */
+export function applyTransform(
+  c: Composition,
+  t: SceneTransform | undefined,
+  tile: { width: number; height: number },
+): Composition {
+  if (!t) return c;
+  const dx = (e?: ElementTransform) => (e?.dx ?? 0) * tile.width;
+  const dy = (e?: ElementTransform) => (e?.dy ?? 0) * tile.height;
+  let copy = c.copy;
+  if (copy && t.copy) {
+    const k = t.copy.scale ?? 1;
+    const ox = dx(t.copy);
+    const oy = dy(t.copy);
+    copy = {
+      ...copy,
+      x: copy.x + ox,
+      y: copy.y + oy,
+      maxWidth: copy.maxWidth * k,
+      typeWidth: copy.typeWidth * k,
+      box: {
+        left: copy.box.left + ox + (copy.box.width - copy.box.width * k) / 2,
+        top: copy.box.top + oy,
+        width: copy.box.width * k,
+        height: copy.box.height * k,
+      },
+    };
+  }
+  const devices = c.devices.map((d, i) => {
+    const e = t.devices?.[i];
+    if (!e) return d;
+    const k = e.scale ?? 1;
+    const cx = d.frame.left + d.frame.width / 2 + dx(e);
+    const cy = d.frame.top + d.frame.height / 2 + dy(e);
+    const map = (r: { left: number; top: number; width: number; height: number }) => {
+      const rcx = r.left + r.width / 2 - (d.frame.left + d.frame.width / 2);
+      const rcy = r.top + r.height / 2 - (d.frame.top + d.frame.height / 2);
+      const w = r.width * k;
+      const h = r.height * k;
+      return { left: cx + rcx * k - w / 2, top: cy + rcy * k - h / 2, width: w, height: h };
+    };
+    return {
+      ...d,
+      frame: map(d.frame),
+      screen: { ...map(d.screen), radius: d.screen.radius * k },
+      rotate: d.rotate + (e.rotate ?? 0),
+    };
+  });
+  return { ...c, copy, devices };
+}
