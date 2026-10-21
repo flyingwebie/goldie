@@ -358,6 +358,7 @@ the next prompt can build on it.
 | A different art direction | `art.style`, then regenerate | `concepts`, `art --force`, `frame`, `manifest` |
 | Captions on the App Store preview | preview `segments[].caption` (`references/promo.md`) | `preview`, `manifest` |
 | A video for social media or ads | `promo` (`references/promo.md`) | `promo` |
+| iPad or Google Play look wrong where the phone tile is right | per device: `scenes[].flows` (navigation differs: iPad top tabs, Android launcher), `scenes[].byDevice.<device>.decorations` (callout regions follow that device's layout), `scenes[].skipDevices` | `capture --device <key> --scene <id>`, `frame`, `manifest` |
 | The app needs a login or tenant the flows cannot create | sign in once on the simulator, then `keepAppData: true` (iOS); flows start with `launch:` from that session | `capture`, `frame`, `manifest` |
 
 `capture` replays every flow; to re-capture only what changed, pass

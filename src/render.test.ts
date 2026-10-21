@@ -101,3 +101,36 @@ describe("studio art settings", () => {
     });
   });
 });
+
+describe("per-device scenes", () => {
+  test("flows, decorations and skipped devices resolve per device", async () => {
+    const { sceneFlow, sceneDecorations, sceneOnDevice, resolvedScenes } = await import(
+      "./config.ts"
+    );
+    const root = fixture();
+    const cfg = await loadConfig(join(root, "goldie.config.ts"));
+    const a = cfg.scenes.find((s) => s.id === "a")!;
+    if (a.kind !== "screenshot") throw new Error("fixture");
+    a.flows = { "ipad-13": "a-ipad" };
+    a.byDevice = { "ipad-13": { decorations: [] } };
+    a.skipDevices = ["pixel-10-pro"];
+    expect(sceneFlow(a, "ipad-13")).toBe("a-ipad");
+    expect(sceneFlow(a, "iphone-6.9")).toBe("a");
+    expect(sceneDecorations(a, "ipad-13")).toEqual([]);
+    expect(sceneDecorations(a, "iphone-6.9")?.length).toBe(5);
+    expect(sceneOnDevice(a, "pixel-10-pro")).toBe(false);
+    expect(resolvedScenes(cfg, "pixel-10-pro").map((r) => r.scene.id)).toEqual(["b"]);
+    expect(resolvedScenes(cfg, "iphone-6.9").map((r) => r.scene.id)).toEqual(["a", "b"]);
+  });
+
+  test("studio edits to a device's list save under <id>@<device>", async () => {
+    const { applyDesign, sceneDecorations } = await import("./config.ts");
+    const root = fixture();
+    const cfg = await loadConfig(join(root, "goldie.config.ts"));
+    applyDesign(cfg, { sceneDecorations: { "a@ipad-13": [] } });
+    const a = cfg.scenes.find((s) => s.id === "a")!;
+    if (a.kind !== "screenshot") throw new Error("fixture");
+    expect(sceneDecorations(a, "ipad-13")).toEqual([]);
+    expect(sceneDecorations(a, "iphone-6.9")?.length).toBe(5);
+  });
+});

@@ -157,6 +157,10 @@ export type DesignScene = {
   layout?: string;
   secondScene?: string;
   decorations?: Decoration[];
+  /** Devices the scene is not shot on. */
+  skipDevices?: string[];
+  /** Per-device decoration lists, replacing `decorations` on that device. */
+  byDevice?: Record<string, { decorations?: Decoration[] }>;
 };
 
 export type BundledFont = {

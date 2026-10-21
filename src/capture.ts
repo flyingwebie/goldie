@@ -7,6 +7,8 @@ import {
   isScreenshot,
   type LoadedConfig,
   type PreviewScene,
+  sceneFlow,
+  sceneOnDevice,
 } from "./config.ts";
 import * as device from "./device.ts";
 import { imageSize } from "./image.ts";
@@ -115,8 +117,8 @@ export async function capture(
   // flows that create records start from the same empty state every run.
   // keepAppData trades that for a session the flows cannot recreate (a
   // sign-in, a dev client pointed at Metro).
-  if (cfg.keepAppData && spec.platform === "ios") {
-    if (!(await device.isInstalled(udid, app.id))) {
+  if (cfg.keepAppData) {
+    if (!(await device.isInstalled(udid, app.id, spec.platform))) {
       throw new Error(
         `keepAppData is on but ${app.id} is not installed on ${udid}. Install it and sign in once, then capture.`,
       );
@@ -137,13 +139,25 @@ export async function capture(
     preview: null,
   };
 
+  // Saved after every scene, merged over what is already on disk, so a flow
+  // that fails partway never loses the captures taken before it (a full run
+  // starts from an empty manifest; a --scene run keeps the other scenes).
+  const previous = onlyScenes ? await readRawManifest(rawDir) : null;
+  const save = async (m: CaptureManifest) => {
+    const result = onlyScenes ? mergeCaptureManifest(previous, m) : m;
+    await writeFile(join(rawDir, "manifest.json"), JSON.stringify(result, null, 2));
+    return result;
+  };
+
   const screenshotScenes = cfg.scenes
     .filter(isScreenshot)
-    .filter((scene) => !onlyScenes || onlyScenes.includes(scene.id));
+    .filter((scene) => !onlyScenes || onlyScenes.includes(scene.id))
+    .filter((scene) => sceneOnDevice(scene, deviceKey));
   for (const scene of screenshotScenes) {
     console.log(`  screenshot ${scene.id}`);
-    const report = await runFlow(flowPath(cfg, scene.flow), udid);
-    if (!report.ok) throw new FlowFailure(scene.id, flowPath(cfg, scene.flow), udid, report);
+    const flow = flowPath(cfg, sceneFlow(scene, deviceKey));
+    const report = await runFlow(flow, udid);
+    if (!report.ok) throw new FlowFailure(scene.id, flow, udid, report);
 
     // The flow runner pins and then restores the status bar around a run, so it
     // is re-pinned per capture rather than once at setup. The settle matters:
@@ -169,6 +183,7 @@ export async function capture(
       console.log(`  capturing at ${got.width}x${got.height}`);
     }
     manifest.screenshots.push({ sceneId: scene.id, file });
+    await save(manifest);
   }
 
   const previewScene = cfg.scenes.find(isPreview);
@@ -184,11 +199,7 @@ export async function capture(
     }
   }
 
-  const result = onlyScenes
-    ? mergeCaptureManifest(await readRawManifest(rawDir), manifest)
-    : manifest;
-  await writeFile(join(rawDir, "manifest.json"), JSON.stringify(result, null, 2));
-  return result;
+  return save(manifest);
 }
 
 /** The raw manifest.json already on disk for a capture dir, or null when there is none yet. */

@@ -54,6 +54,25 @@ export type ScreenshotScene = {
   /** Flow in the app's `.argent/flows`: a name ("home") or a path under it ("goldie/home.yaml"). Its final step captures the screenshot. */
   flow: string;
   /**
+   * A different flow per device key, for a device whose navigation differs
+   * (an iPad's top tab bar, Android's system back): `flows: { "ipad-13":
+   * "store-02-ipad" }`. Devices not listed run `flow`.
+   */
+  flows?: Partial<Record<DeviceKey, string>>;
+  /**
+   * Per-device overrides. `decorations` replaces this scene's decorations on
+   * that device: callouts cut regions from the screen, and an iPad lays its
+   * screen out differently from a phone. The studio edits a device's own list
+   * when it has one.
+   */
+  byDevice?: Partial<Record<DeviceKey, { decorations?: Decoration[] }>>;
+  /**
+   * Devices this scene is not shot on: a screen an iPad or the Android build
+   * cannot reach, or one held back while its data is prepared. The scene is
+   * neither captured nor framed for them.
+   */
+  skipDevices?: DeviceKey[];
+  /**
    * Headline per locale. Wrap words in asterisks to stress them ("Clear your
    * *head*"); theme.emphasis decides how a stressed word stands out.
    */
@@ -458,7 +477,7 @@ export type GoldieConfig = {
    * pointed at Metro) that a flow cannot recreate: sign in once on the
    * simulator, then capture. The app must already be installed; flows then
    * start from whatever state it was left in, so they must not assume a fresh
-   * install. iOS devices only; android always reinstalls.
+   * install. Works on iOS simulators and android devices (checked with adb).
    */
   keepAppData?: boolean;
   /**
@@ -613,6 +632,9 @@ export function validateDesignLayers(cfg: LoadedConfig): void {
   for (const scene of cfg.scenes) {
     if (!isScreenshot(scene)) continue;
     check(`scene "${scene.id}" decorations`, scene.decorations);
+    for (const [device, o] of Object.entries(scene.byDevice ?? {})) {
+      check(`scene "${scene.id}" byDevice.${device}.decorations`, o?.decorations);
+    }
     exists(`scene "${scene.id}" backgroundImage`, scene.backgroundImage);
   }
 }
@@ -758,8 +780,18 @@ export function applyDesign(cfg: LoadedConfig, design: DesignOverrides): void {
   }
   if (design.sceneDecorations) {
     for (const scene of cfg.scenes) {
+      if (!isScreenshot(scene)) continue;
       const list = design.sceneDecorations[scene.id];
-      if (isScreenshot(scene) && list) scene.decorations = list;
+      if (list) scene.decorations = list;
+      // "<sceneId>@<device>": the studio's edits to a device's own list.
+      for (const [key, deviceList] of Object.entries(design.sceneDecorations)) {
+        const [id, device] = key.split("@");
+        if (id !== scene.id || !device || !isDeviceKey(device)) continue;
+        scene.byDevice = {
+          ...scene.byDevice,
+          [device]: { ...scene.byDevice?.[device], decorations: deviceList },
+        };
+      }
     }
   }
   if (design.sceneTransforms) {
@@ -794,8 +826,9 @@ function checkedTemplate(key: string): TemplateChoice {
 }
 
 /** Every screenshot scene with the layout and second capture it renders with, in strip order. */
-export function resolvedScenes(cfg: LoadedConfig) {
-  return resolveScenes(cfg.scenes.filter(isScreenshot), {
+export function resolvedScenes(cfg: LoadedConfig, device?: DeviceKey) {
+  const shots = cfg.scenes.filter(isScreenshot).filter((s) => !device || sceneOnDevice(s, device));
+  return resolveScenes(shots, {
     template: cfg.theme.template,
     layout: cfg.theme.layout,
     sceneLayouts: cfg.sceneLayouts,
@@ -953,6 +986,24 @@ export function deviceFrame(
 export function flowPath(cfg: LoadedConfig, flow: string): string {
   const file = flow.endsWith(".yaml") || flow.endsWith(".yml") ? flow : `${flow}.yaml`;
   return resolve(cfg.flowsDir, file);
+}
+
+/** Whether a screenshot scene is shot on a device. */
+export function sceneOnDevice(scene: ScreenshotScene, device: DeviceKey): boolean {
+  return !scene.skipDevices?.includes(device);
+}
+
+/** A screenshot scene's decorations on a device: its per-device list, else its own. */
+export function sceneDecorations(
+  scene: ScreenshotScene,
+  device: DeviceKey,
+): Decoration[] | undefined {
+  return scene.byDevice?.[device]?.decorations ?? scene.decorations;
+}
+
+/** The flow a screenshot scene runs on a device: its per-device override, else its `flow`. */
+export function sceneFlow(scene: ScreenshotScene, device: DeviceKey): string {
+  return scene.flows?.[device] ?? scene.flow;
 }
 
 export const isPreview = (s: Scene): s is PreviewScene => s.kind === "preview";

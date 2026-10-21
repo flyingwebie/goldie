@@ -14,6 +14,7 @@ import {
   type LoadedConfig,
   resolvedScenes,
   type ScreenshotScene,
+  sceneDecorations,
 } from "./config.ts";
 import type { SceneInput } from "./draw.ts";
 import { registerFonts } from "./fonts.ts";
@@ -80,7 +81,7 @@ export async function prepareScenes(
     return shot;
   };
 
-  const resolved = resolvedScenes(cfg);
+  const resolved = resolvedScenes(cfg, deviceKey);
   const totalSlots = resolved.reduce((n, r) => n + r.layout.span, 0);
   const backdrop = cfg.theme.backdrop ? await load(cfg.theme.backdrop) : null;
 
@@ -101,7 +102,7 @@ export async function prepareScenes(
     );
     const decorations: Decoration[] = [
       ...(cfg.theme.decorations ?? []),
-      ...(scene.decorations ?? []),
+      ...(sceneDecorations(scene, deviceKey) ?? []),
     ];
     const images = new Map<string, Image>();
     for (const d of decorations) if (d.kind === "image") images.set(d.src, await load(d.src));

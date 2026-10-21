@@ -252,7 +252,10 @@ export function Strip({
       }
     };
     collect(design.decorations);
-    for (const scene of design.scenes) collect(scene.decorations);
+    for (const scene of design.scenes) {
+      collect(scene.decorations);
+      for (const o of Object.values(scene.byDevice ?? {})) collect(o.decorations);
+    }
     return map;
   }, [design.decorations, design.scenes]);
   const resolveArtUrl = (configSrc: string) =>
@@ -266,10 +269,18 @@ export function Strip({
     setSelection(null);
     setPickRegionIndex(null);
   };
+  // Scenes shot on this device, in display order.
+  const deviceScenes = design.scenes.filter((s) => !s.skipDevices?.includes(tileSpec.key));
   const scenes =
     order.length > 0
-      ? [...design.scenes].sort((a, b) => rankOf(order, a.id) - rankOf(order, b.id))
-      : design.scenes;
+      ? [...deviceScenes].sort((a, b) => rankOf(order, a.id) - rankOf(order, b.id))
+      : deviceScenes;
+  // A scene's decorations on this device, and the goldie.design.json key its
+  // studio edits save under: "<id>@<device>" when the device has its own list.
+  const deviceDecorations = (scene: DesignScene) =>
+    scene.byDevice?.[tileSpec.key]?.decorations ?? scene.decorations ?? [];
+  const decorationKey = (scene: DesignScene) =>
+    scene.byDevice?.[tileSpec.key]?.decorations ? `${scene.id}@${tileSpec.key}` : scene.id;
   // The same resolution the CLI runs, on the scenes in their displayed order.
   const resolved = resolveScenes(scenes, {
     template: Array.isArray(template)
@@ -399,7 +410,7 @@ export function Strip({
     // once it has touched this scene, else the config's (manifest baseline),
     // in canonical (config-relative image src) form.
     const sceneDecosCanonical =
-      sceneDecorations[scene.id] ?? canonicalDecorations(scene.decorations ?? []);
+      sceneDecorations[decorationKey(scene)] ?? canonicalDecorations(deviceDecorations(scene));
     const sceneTransform = sceneTransforms[scene.id] ?? {};
     const editorInfo: EditorEntryInfo = {
       sceneId: scene.id,
@@ -409,8 +420,8 @@ export function Strip({
       pickRegionIndex,
       onPickRegion: setPickRegionIndex,
       decorations: sceneDecosCanonical,
-      baselineDecorations: canonicalDecorations(scene.decorations ?? []),
-      onDecorations: (list, fieldKey) => onSceneDecorations(scene.id, list, fieldKey),
+      baselineDecorations: canonicalDecorations(deviceDecorations(scene)),
+      onDecorations: (list, fieldKey) => onSceneDecorations(decorationKey(scene), list, fieldKey),
       transform: sceneTransform,
       onTransform: (t, fieldKey) => onSceneTransform(scene.id, t, fieldKey),
       baseComposition: compose(spec, tileSpec.screenshot, theme, {

@@ -276,7 +276,10 @@ function Loaded({
   const revertScene = (sceneId: string) =>
     set(`revert:${sceneId}`, (prev) => {
       const sceneDecorations = { ...prev.sceneDecorations };
-      delete sceneDecorations[sceneId];
+      // The scene's own list and every per-device list ("<id>@<device>").
+      for (const key of Object.keys(sceneDecorations)) {
+        if (key === sceneId || key.startsWith(`${sceneId}@`)) delete sceneDecorations[key];
+      }
       const sceneTransforms = { ...prev.sceneTransforms };
       delete sceneTransforms[sceneId];
       return { ...prev, sceneDecorations, sceneTransforms };

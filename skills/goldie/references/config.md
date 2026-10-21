@@ -87,6 +87,10 @@ const config: GoldieConfig = {
       // background: "..."     optional per-scene override
       // layout: "hero",        optional per-scene layout
       // align: "left",         copy alignment: left | center | right (overrides the layout's)
+      // flows: { "ipad-13": "store-02-ipad" },   a device whose navigation differs runs its own flow
+      // byDevice: { "ipad-13": { decorations: [...] } },   callout regions and art placed for that
+      //                         device's layout (an iPad screen is laid out differently from a phone)
+      // skipDevices: ["pixel-10-pro"],            not shot on these devices
       // secondScene: "detail", the second screen for duo / panorama-duo
       // decorations: [...],    layers on this tile only
     },

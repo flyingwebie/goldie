@@ -171,7 +171,10 @@ export async function doctor(cfg: LoadedConfig): Promise<boolean> {
   });
 
   for (const scene of cfg.scenes) {
-    const flows = scene.kind === "preview" ? scene.segments.map((s) => s.flow) : [scene.flow];
+    const flows =
+      scene.kind === "preview"
+        ? scene.segments.map((s) => s.flow)
+        : [scene.flow, ...Object.values(scene.flows ?? {}).filter((f): f is string => Boolean(f))];
     for (const f of flows) {
       const path = flowPath(cfg, f);
       const exists = existsSync(path);

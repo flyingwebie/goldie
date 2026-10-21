@@ -120,6 +120,10 @@ export type StoreManifest = {
       layout?: string;
       secondScene?: string;
       decorations?: Decoration[];
+      /** Devices the scene is not shot on. */
+      skipDevices?: string[];
+      /** Per-device decoration lists, replacing `decorations` on that device. */
+      byDevice?: Record<string, { decorations?: Decoration[] }>;
     }>;
     preview: {
       sceneId: string;
@@ -271,6 +275,19 @@ export async function writeManifest(cfg: LoadedConfig): Promise<string> {
       ...(scene.layout ? { layout: scene.layout } : {}),
       ...(scene.secondScene ? { secondScene: scene.secondScene } : {}),
       ...(scene.decorations ? { decorations: await webDecorations(scene.decorations) } : {}),
+      ...(scene.skipDevices?.length ? { skipDevices: scene.skipDevices } : {}),
+      ...(scene.byDevice
+        ? {
+            byDevice: Object.fromEntries(
+              await Promise.all(
+                Object.entries(scene.byDevice).map(async ([device, o]) => [
+                  device,
+                  o?.decorations ? { decorations: await webDecorations(o.decorations) } : {},
+                ]),
+              ),
+            ),
+          }
+        : {}),
     });
   }
   const theme: Theme = {
