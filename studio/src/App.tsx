@@ -83,6 +83,15 @@ export function App() {
   );
   const [error, setError] = useState<Error | null>(null);
 
+  // Reloads just the manifest (not the saved design) after a lightbox Redo
+  // job finishes: a recapture or an art regeneration changes the pixels
+  // `goldie manifest` already wrote, not goldie.design.json.
+  const reloadManifest = () =>
+    loadManifest().then(
+      (manifest) => setLoaded((prev) => (prev ? { ...prev, manifest } : prev)),
+      (e: Error) => setError(e),
+    );
+
   useEffect(() => {
     Promise.all([loadManifest(), loadDesign()])
       .then(([manifest, design]) => setLoaded({ manifest, design }))
@@ -99,7 +108,9 @@ export function App() {
       />
     );
   if (!loaded) return null;
-  return <Loaded manifest={loaded.manifest} saved={loaded.design} />;
+  return (
+    <Loaded manifest={loaded.manifest} saved={loaded.design} onReloadManifest={reloadManifest} />
+  );
 }
 
 /**
@@ -116,7 +127,16 @@ export function App() {
  * the config when a stored value no longer applies (a device or frame
  * variant removed from the config, for instance).
  */
-function Loaded({ manifest, saved }: { manifest: StoreManifest; saved: SavedDesign }) {
+function Loaded({
+  manifest,
+  saved,
+  onReloadManifest,
+}: {
+  manifest: StoreManifest;
+  saved: SavedDesign;
+  /** Refetches /store.json after a lightbox Redo job (recapture or art regen) finishes. */
+  onReloadManifest: () => void;
+}) {
   const design = manifest.design;
   const view = loadView(manifest.app.name);
   // Every device-type tab renders even when only one is configured, so the
@@ -473,6 +493,7 @@ function Loaded({ manifest, saved }: { manifest: StoreManifest; saved: SavedDesi
                 history={{ canUndo, canRedo, undo, redo }}
                 onRevertScene={revertScene}
                 onRevertAll={revertAll}
+                onReloadManifest={onReloadManifest}
               />
             </div>
           ) : spec ? (

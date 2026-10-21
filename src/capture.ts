@@ -1,4 +1,4 @@
-import { copyFile, mkdir, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import * as argent from "./argent.ts";
 import {
@@ -75,15 +75,38 @@ export type CaptureManifest = {
   } | null;
 };
 
+export type CaptureOpts = {
+  /**
+   * Replay and capture only these scene ids (a screenshot scene's id, or the
+   * preview scene's own id to capture its segments) instead of every scene.
+   * The fresh capture is merged into the existing raw manifest.json, so other
+   * scenes' captures survive untouched. Unless `keepAppData` is on, the app is
+   * still reinstalled first (capture()'s usual fresh-install behaviour), so a
+   * recaptured scene's flow must stand on its own - it cannot assume state an
+   * earlier, now-unreplayed scene would have left behind. Defaults to every
+   * scene (a full capture).
+   */
+  onlyScenes?: string[];
+};
+
 export async function capture(
   cfg: LoadedConfig,
   deviceKey: DeviceKey,
   locale: string = cfg.locales[0]!,
+  opts: CaptureOpts = {},
 ): Promise<CaptureManifest> {
   const spec = DEVICES[deviceKey];
   const udid = await device.resolveUdid(deviceKey);
   const rawDir = rawDirFor(cfg, deviceKey, locale);
   await mkdir(rawDir, { recursive: true });
+
+  const onlyScenes = opts.onlyScenes;
+  if (onlyScenes) {
+    const known = new Set(cfg.scenes.map((s) => s.id));
+    for (const id of onlyScenes) {
+      if (!known.has(id)) throw new Error(`Unknown scene id "${id}" passed to --scene.`);
+    }
+  }
 
   const app = appFor(cfg, deviceKey);
   console.log(`> ${spec.simulatorName ?? spec.label} (${udid}), ${locale}`);
@@ -114,7 +137,10 @@ export async function capture(
     preview: null,
   };
 
-  for (const scene of cfg.scenes.filter(isScreenshot)) {
+  const screenshotScenes = cfg.scenes
+    .filter(isScreenshot)
+    .filter((scene) => !onlyScenes || onlyScenes.includes(scene.id));
+  for (const scene of screenshotScenes) {
     console.log(`  screenshot ${scene.id}`);
     const report = await runFlow(flowPath(cfg, scene.flow), udid);
     if (!report.ok) throw new FlowFailure(scene.id, flowPath(cfg, scene.flow), udid, report);
@@ -146,7 +172,11 @@ export async function capture(
   }
 
   const previewScene = cfg.scenes.find(isPreview);
-  if (previewScene) {
+  // A --scene recapture skips the preview segments unless the preview scene's
+  // own id was named - re-recording a whole story just to fix one screenshot
+  // would be surprising, and expensive on a long story.
+  const wantsPreview = previewScene && (!onlyScenes || onlyScenes.includes(previewScene.id));
+  if (wantsPreview) {
     if (spec.preview) {
       manifest.preview = await captureSegments(cfg, previewScene, deviceKey, udid, rawDir, app.id);
     } else {
@@ -154,8 +184,46 @@ export async function capture(
     }
   }
 
-  await writeFile(join(rawDir, "manifest.json"), JSON.stringify(manifest, null, 2));
-  return manifest;
+  const result = onlyScenes
+    ? mergeCaptureManifest(await readRawManifest(rawDir), manifest)
+    : manifest;
+  await writeFile(join(rawDir, "manifest.json"), JSON.stringify(result, null, 2));
+  return result;
+}
+
+/** The raw manifest.json already on disk for a capture dir, or null when there is none yet. */
+async function readRawManifest(rawDir: string): Promise<CaptureManifest | null> {
+  try {
+    return JSON.parse(await readFile(join(rawDir, "manifest.json"), "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Merges a `--scene`-limited capture into the previous raw manifest: screenshots
+ * and preview clips keep their existing entries except for the ones `fresh`
+ * just recaptured, which replace them (or append, for a scene the previous
+ * manifest never had). With no previous manifest at all (the first capture of
+ * this device/locale, even though only some scenes were asked for), `fresh`
+ * stands alone.
+ */
+export function mergeCaptureManifest(
+  existing: CaptureManifest | null,
+  fresh: CaptureManifest,
+): CaptureManifest {
+  if (!existing) return fresh;
+  const screenshots = [...existing.screenshots];
+  for (const shot of fresh.screenshots) {
+    const i = screenshots.findIndex((s) => s.sceneId === shot.sceneId);
+    if (i === -1) screenshots.push(shot);
+    else screenshots[i] = shot;
+  }
+  // The preview scene is captured as one unit (every segment, see
+  // captureSegments), so a fresh preview wholesale replaces the old one;
+  // with no fresh preview (not asked for) the existing one stands.
+  const preview = fresh.preview ?? existing.preview;
+  return { ...fresh, screenshots, preview };
 }
 
 /** The build a device installs: the .app for iOS, the config's .apk for android. */

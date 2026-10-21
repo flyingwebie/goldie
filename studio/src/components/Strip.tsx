@@ -51,6 +51,7 @@ import {
   EditorOverlay,
   EditorToolbar,
   Inspector,
+  RedoMenu,
   type Selection,
 } from "./Editor";
 import { Select } from "./Sidebar";
@@ -159,6 +160,10 @@ export type EditorEntryInfo = {
   history: { canUndo: boolean; canRedo: boolean; undo: () => void; redo: () => void };
   onResetScene: () => void;
   onRevertAll: () => void;
+  /** The device this tile is shown on, for the lightbox's Redo > Recapture action. */
+  deviceKey: string;
+  /** Refreshes the manifest once a Redo job (recapture or art regen) finishes. */
+  onRedoDone: () => void;
 };
 export function Strip({
   design,
@@ -187,6 +192,7 @@ export function Strip({
   history,
   onRevertScene,
   onRevertAll,
+  onReloadManifest,
 }: {
   design: Design;
   captures: DeviceCaptures;
@@ -229,6 +235,8 @@ export function Strip({
   history: { canUndo: boolean; canRedo: boolean; undo: () => void; redo: () => void };
   onRevertScene: (sceneId: string) => void;
   onRevertAll: () => void;
+  /** Refreshes the manifest once a lightbox Redo job (recapture or art regen) finishes. */
+  onReloadManifest: () => void;
 }) {
   const theme = design.theme;
   const frameGeometry = FRAMES[tileSpec.key as keyof typeof FRAMES] ?? FRAMES["iphone-6.9"];
@@ -419,6 +427,8 @@ export function Strip({
       onCopyText: (field, text) => onCopy(scene.id, field, text),
       defaultAlign: (scene.align ?? spec.copy.align) as CopyAlign,
       history,
+      deviceKey: tileSpec.key,
+      onRedoDone: onReloadManifest,
       onResetScene: () => {
         onRevertScene(scene.id);
         clearSelection();
@@ -859,6 +869,11 @@ function Lightbox({
               onRevertScene={editor.onResetScene}
               onRevertAll={editor.onRevertAll}
             />
+            <RedoMenu
+              sceneId={editor.sceneId}
+              deviceKey={editor.deviceKey}
+              onDone={editor.onRedoDone}
+            />
           </>
         ) : null}
       </div>
@@ -1126,7 +1141,8 @@ function ScreenshotScene({
       </div>
 
       {/* The strip-wide backdrop, over the background as drawScene draws it. */}
-      {backdropUrl ? (
+      {/* A tile's own background image replaces the backdrop on it, as drawScene does. */}
+      {backdropUrl && !bgImageUrl ? (
         <div
           style={{
             position: "absolute",

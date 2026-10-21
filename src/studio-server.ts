@@ -4,9 +4,11 @@ import { readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { dirname, extname, join, normalize, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { runArt } from "./art/index.ts";
 import { locateApiKey } from "./art/keys.ts";
 import { ART_MODELS, refreshOpenAiModels } from "./art/models.ts";
 import { ART_STYLES } from "./art/styles.ts";
+import { assetsForScene } from "./art/tile-assets.ts";
 import { isScreenshot, loadConfig } from "./config.ts";
 import { deleteCredential, last4, setCredential } from "./credentials.ts";
 import { type Plan, planPath, readDiscovery, readPlan, writePlan } from "./discover.ts";
@@ -55,6 +57,25 @@ import { zipDirs } from "./zip.ts";
  * GET/PUT /api/plan - the Discovery & Plan feature's `{ discovery, plan }`
  * (src/discover.ts): which features and screens to build the story
  * around, written by `goldie discover` and edited in the studio's Plan view.
+ *
+ * GET /api/redo/:sceneId - the lightbox's Redo menu, for one screenshot
+ * scene: `{ assets: TileArtAsset[] & { estimatedUsd } }`, the AI art assets
+ * that tile draws (src/art/tile-assets.ts) priced with a `runArt` dry run.
+ *
+ * POST /api/redo/:sceneId/capture `{ device? }` - re-runs just that scene's
+ * flow on the simulator (`goldie capture --scene`), merging into the raw
+ * manifest, then `frame` and `manifest`. Streams the CLI log like
+ * /api/export.
+ *
+ * POST /api/redo/:sceneId/art `{ assets: string[] }` - regenerates the named
+ * art assets (`goldie art --only <ids> --force --yes`), then `frame` and
+ * `manifest`. Streamed the same way; `goldie art` already moves the
+ * overwritten file to `<artDir>/.history/` first.
+ *
+ * POST /api/redo/art/:assetId/restore - swaps the newest
+ * `<artDir>/.history/<assetId>-*` file back in over the current
+ * `<artDir>/<assetId>.*`, snapshotting what it replaces first so the restore
+ * itself is one more undo-able step.
  */
 
 export type StudioPaths = {
@@ -231,6 +252,140 @@ export function exportHandler({ paths, cli }: StudioApi): (sub: string) => Handl
         res.end();
       }
     });
+  };
+}
+
+/** The art dir's assets this scene draws, each priced with a `runArt` dry run (spends nothing, needs no API key). */
+async function getRedoAssets(configPath: string, sceneId: string) {
+  const cfg = await loadConfig(configPath);
+  const assets = assetsForScene(cfg, sceneId);
+  if (!cfg.art || assets.length === 0) return { assets: [] };
+  const plans = await runArt(cfg, { only: assets.map((a) => a.id), force: true, dryRun: true });
+  const estimateOf = new Map(plans.map((p) => [p.id, p.estimatedUsd]));
+  return {
+    assets: assets.map((a) => ({ ...a, estimatedUsd: estimateOf.get(a.id) ?? 0 })),
+  };
+}
+
+/**
+ * Swaps the newest `<artDir>/.history/<assetId>-*` file back in over the
+ * current `<artDir>/<assetId>.*`. The file currently in place (the
+ * regeneration the user wants to undo) is snapshotted into `.history` first,
+ * under the same naming `src/history.ts`'s snapshotArtFile uses, so this
+ * restore is itself one more undo-able step rather than a dead end.
+ */
+async function restoreArtAsset(
+  configPath: string,
+  assetId: string,
+): Promise<{ status: number; json: unknown }> {
+  const cfg = await loadConfig(configPath);
+  const artDir = resolve(cfg.root, cfg.art?.dir ?? "art");
+  const historyDir = join(artDir, ".history");
+  const prefix = `${assetId}-`;
+  const names = (await readdir(historyDir).catch(() => [] as string[]))
+    .filter((n) => n.startsWith(prefix))
+    .sort(); // sanitized ISO timestamps, so lexical order is chronological
+  const newest = names.at(-1);
+  if (!newest) {
+    return { status: 404, json: { error: `No previous version of "${assetId}" to restore.` } };
+  }
+  const ext = newest.slice(newest.lastIndexOf("."));
+  const current = join(artDir, `${assetId}${ext}`);
+  if (existsSync(current)) {
+    const toId = (iso: string) => iso.replace(/[:.]/g, "-");
+    await rename(current, join(historyDir, `${assetId}-${toId(new Date().toISOString())}${ext}`));
+  }
+  await rename(join(historyDir, newest), current);
+  return { status: 200, json: { ok: true, file: `${assetId}${ext}` } };
+}
+
+/**
+ * Handles the /api/redo/* surface (see the doc comment above): `sub` is the
+ * path after /api/redo. One job (a capture or an art regeneration) runs at a
+ * time; `cli`/`stream` mirror exportHandler's pattern exactly.
+ */
+export function redoHandler({ paths, cli }: StudioApi): (sub: string) => Handler {
+  let busy = false;
+
+  return (sub) => (req, res) => {
+    const restoreMatch = sub.match(/^\/art\/([^/]+)\/restore$/);
+    if (restoreMatch && req.method === "POST") {
+      restoreArtAsset(paths.configPath, decodeURIComponent(restoreMatch[1]!)).then(
+        ({ status, json }) => sendJson(res, status, json),
+        (err) => sendJson(res, 500, { error: errorMessage(err) }),
+      );
+      return;
+    }
+
+    const captureMatch = sub.match(/^\/([^/]+)\/capture$/);
+    const artMatch = sub.match(/^\/([^/]+)\/art$/);
+    if ((captureMatch || artMatch) && req.method === "POST") {
+      if (busy) {
+        res.statusCode = 409;
+        res.end("A redo job is already running.");
+        return;
+      }
+      const sceneId = decodeURIComponent((captureMatch ?? artMatch)![1]!);
+      busy = true;
+
+      readBody(req).then(async (body) => {
+        res.writeHead(200, {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "no-store",
+        });
+        const [bin, ...prefix] = cli;
+        const run = (args: string[]) => {
+          res.write(`$ goldie ${args.join(" ")}\n`);
+          return stream(bin!, [...prefix, ...args], paths.configDir, res, {
+            GOLDIE_CONFIG: paths.configPath,
+          });
+        };
+        try {
+          if (captureMatch) {
+            let device: string | undefined;
+            try {
+              device = JSON.parse(body || "{}").device;
+            } catch {
+              // No body, or not JSON: capture every configured device.
+            }
+            const deviceFlags = device ? ["--device", device] : [];
+            await run(["capture", "--scene", sceneId, ...deviceFlags]);
+            await run(["frame", ...deviceFlags]);
+          } else {
+            let assets: unknown;
+            try {
+              assets = JSON.parse(body || "{}").assets;
+            } catch {
+              assets = undefined;
+            }
+            if (!Array.isArray(assets) || assets.length === 0) {
+              throw new Error("No art assets selected.");
+            }
+            await run(["art", "--only", assets.join(","), "--force", "--yes"]);
+            await run(["frame"]);
+          }
+          await run(["manifest"]);
+          res.write("[done]\n");
+        } catch (err) {
+          res.write(`[failed] ${errorMessage(err)}\n`);
+        } finally {
+          busy = false;
+          res.end();
+        }
+      });
+      return;
+    }
+
+    const infoMatch = sub.match(/^\/([^/]+)$/);
+    if (infoMatch && req.method === "GET") {
+      getRedoAssets(paths.configPath, decodeURIComponent(infoMatch[1]!)).then(
+        (json) => sendJson(res, 200, json),
+        (err) => sendJson(res, 500, { error: errorMessage(err) }),
+      );
+      return;
+    }
+
+    sendJson(res, 404, { error: "not found" });
   };
 }
 
@@ -648,6 +803,7 @@ export function serveStudio(api: StudioApi, port = 4321): Promise<string> {
   const settings = settingsHandler(api);
   const history = historyHandler(api);
   const plan = planHandler(api);
+  const redo = redoHandler(api);
 
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
@@ -661,6 +817,7 @@ export function serveStudio(api: StudioApi, port = 4321): Promise<string> {
     if (path.startsWith("/api/history"))
       return history(path.slice("/api/history".length))(req, res);
     if (path === "/api/plan") return plan(req, res);
+    if (path.startsWith("/api/redo")) return redo(path.slice("/api/redo".length))(req, res);
 
     const file = fileIn(api.paths.webDir, path) ?? fileIn(STUDIO_DIST, path);
     if (file) return sendFile(req, res, file);

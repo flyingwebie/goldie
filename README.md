@@ -145,6 +145,13 @@ renders the same result. The config also takes:
   ```
 - `decorations`: badges or images layered behind the device.
 
+Open a tile and its lightbox toolbar has a **Redo** button: recapture that
+screen's flow on the simulator, or pick and regenerate just the AI art it
+draws, each with a streamed progress log and (for art) a priced checklist and
+a "Restore previous" once it finishes. The CLI equivalents are `goldie
+capture --scene <id>` (merges into the existing raw manifest) and `goldie art
+--only <id> --force --yes`.
+
 Beyond the strip, the studio has three more views, always in its tab row:
 
 - **Settings** (gear icon): the OpenAI and fal.ai keys `goldie art` needs,

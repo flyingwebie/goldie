@@ -253,15 +253,27 @@ export async function loadManifest(): Promise<StoreManifest> {
     d.type ??= d.platform === "android" ? "android" : d.key.startsWith("ipad") ? "ipad" : "iphone";
   }
 
-  // Raw captures keep their names across a re-capture, so the manifest's
-  // timestamp becomes a cache-buster - a capture followed by a manifest
-  // reload shows new pixels.
+  // Raw captures and regenerated art keep their names across a recapture or
+  // `goldie art --force`, so the manifest's timestamp becomes a cache-buster -
+  // a redo followed by a manifest reload shows the new pixels rather than a
+  // stale cached image.
   const v = `?v=${Date.parse(manifest.generatedAt) || 0}`;
   for (const device of Object.values(manifest.design.captures)) {
     for (const captures of [device, ...Object.values(device.byLocale ?? {})]) {
       for (const shot of captures.screenshots) shot.url += v;
       for (const clip of captures.clips ?? []) clip.url += v;
     }
+  }
+  const bust = (url: string | undefined) => (url && url !== "none" ? `${url}${v}` : url);
+  const bustDecorations = (list: Decoration[] | undefined) => {
+    for (const d of list ?? []) if (d.kind === "image") d.src = bust(d.src)!;
+  };
+  manifest.design.theme.backgroundImage = bust(manifest.design.theme.backgroundImage);
+  manifest.design.theme.backdrop = bust(manifest.design.theme.backdrop);
+  bustDecorations(manifest.design.decorations);
+  for (const scene of manifest.design.scenes) {
+    scene.backgroundImage = bust(scene.backgroundImage);
+    bustDecorations(scene.decorations);
   }
   return manifest;
 }

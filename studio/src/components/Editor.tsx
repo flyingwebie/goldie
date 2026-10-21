@@ -6,9 +6,11 @@ import {
   ArrowUpToLineIcon,
   CropIcon,
   ImagePlusIcon,
+  Loader2Icon,
   MessageSquareTextIcon,
   PlusIcon,
   Redo2Icon,
+  RefreshCwIcon,
   RotateCcwIcon,
   StarIcon,
   TagIcon,
@@ -25,6 +27,7 @@ import {
   toFraction,
 } from "../../../src/editor-geom";
 import type { Composition, CopyAlign } from "../../../src/layouts";
+import { loadRedoInfo, type RedoAsset, restoreArt, runRedoArt, runRedoCapture } from "../lib/redo";
 import type { ArtLibraryImage, Decoration, SceneTransform } from "../manifest";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -1431,5 +1434,240 @@ function Select2({
         </option>
       ))}
     </select>
+  );
+}
+
+/** Which screen the Redo popover shows. */
+type RedoMode = "menu" | "pick-art" | "running" | "done";
+
+/**
+ * The lightbox toolbar's "Redo" menu for one screenshot scene: recapture its
+ * flow on the simulator (/api/redo/:sceneId/capture), or pick and regenerate
+ * the AI art it draws (/api/redo/:sceneId/art), streaming the CLI log either
+ * way. `onDone` refreshes the studio's manifest once a job finishes, so the
+ * new pixels show without a manual reload.
+ */
+export function RedoMenu({
+  sceneId,
+  deviceKey,
+  onDone,
+}: {
+  sceneId: string;
+  deviceKey: string;
+  onDone: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [mode, setMode] = useState<RedoMode>("menu");
+  const [assets, setAssets] = useState<RedoAsset[] | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
+  const [log, setLog] = useState("");
+  const [failed, setFailed] = useState(false);
+  const [restored, setRestored] = useState<Set<string>>(new Set());
+  // Which action the running/done panel is reporting on: only an art
+  // regeneration offers "Restore previous" afterward.
+  const [lastAction, setLastAction] = useState<"capture" | "art" | null>(null);
+  const logRef = useRef<HTMLPreElement>(null);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: scroll whenever the log text changes
+  useEffect(() => {
+    logRef.current?.scrollTo(0, logRef.current.scrollHeight);
+  }, [log]);
+
+  function openChange(next: boolean) {
+    if (busy) return; // never close out from under a running job
+    setOpen(next);
+    if (!next) {
+      setMode("menu");
+      setLog("");
+      setFailed(false);
+      setRestored(new Set());
+      setLastAction(null);
+      return;
+    }
+    if (assets === null) {
+      loadRedoInfo(sceneId).then(
+        (info) => {
+          setAssets(info.assets);
+          setSelected(new Set(info.assets.map((a) => a.id)));
+        },
+        () => setAssets([]),
+      );
+    }
+  }
+
+  async function recapture() {
+    setLastAction("capture");
+    setMode("running");
+    setBusy(true);
+    setFailed(false);
+    setLog("");
+    try {
+      await runRedoCapture(sceneId, deviceKey, (line) => setLog((prev) => `${prev}${line}\n`));
+      setMode("done");
+      onDone();
+    } catch {
+      setFailed(true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function regenerateArt() {
+    setLastAction("art");
+    setMode("running");
+    setBusy(true);
+    setFailed(false);
+    setLog("");
+    try {
+      await runRedoArt(sceneId, [...selected], (line) => setLog((prev) => `${prev}${line}\n`));
+      setMode("done");
+      onDone();
+    } catch {
+      setFailed(true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function restorePrevious(assetId: string) {
+    await restoreArt(assetId);
+    setRestored((prev) => new Set(prev).add(assetId));
+    onDone();
+  }
+
+  const estimate = (assets ?? [])
+    .filter((a) => selected.has(a.id))
+    .reduce((sum, a) => sum + a.estimatedUsd, 0);
+
+  return (
+    <Popover open={open} onOpenChange={openChange}>
+      <PopoverTrigger asChild>
+        <Button type="button" variant="outline" size="sm" disabled={busy}>
+          <RefreshCwIcon /> Redo
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="dark w-80 text-foreground">
+        {mode === "menu" ? (
+          <div className="flex flex-col gap-1">
+            <button
+              type="button"
+              className="flex flex-col items-start gap-0.5 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted"
+              onClick={() => void recapture()}
+            >
+              <span className="font-medium">Recapture screen</span>
+              <span className="text-xs text-muted-foreground">
+                Re-runs this tile's flow on the simulator and replaces its raw capture. The
+                simulator (and Metro, for a dev-client app) must already be running.
+              </span>
+            </button>
+            <button
+              type="button"
+              disabled={!assets || assets.length === 0}
+              className="flex flex-col items-start gap-0.5 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={() => setMode("pick-art")}
+            >
+              <span className="font-medium">Regenerate art</span>
+              <span className="text-xs text-muted-foreground">
+                {assets === null
+                  ? "Loading this tile's art assets…"
+                  : assets.length === 0
+                    ? "No AI art on this tile."
+                    : `${assets.length} AI art asset${assets.length === 1 ? "" : "s"} on this tile.`}
+              </span>
+            </button>
+          </div>
+        ) : mode === "pick-art" ? (
+          <div className="flex flex-col gap-2">
+            <p className="text-xs text-muted-foreground">
+              Regenerates the checked assets with `goldie art --force`, then re-renders this tile.
+            </p>
+            <div className="flex flex-col gap-1">
+              {(assets ?? []).map((a) => (
+                <label key={a.id} className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={selected.has(a.id)}
+                    onChange={(e) =>
+                      setSelected((prev) => {
+                        const next = new Set(prev);
+                        if (e.target.checked) next.add(a.id);
+                        else next.delete(a.id);
+                        return next;
+                      })
+                    }
+                  />
+                  <span className="flex-1 truncate">{a.shared ? a.label : a.id}</span>
+                  <span className="text-xs text-muted-foreground">
+                    ~${a.estimatedUsd.toFixed(2)}
+                  </span>
+                </label>
+              ))}
+            </div>
+            <div className="flex items-center justify-between border-t border-border pt-2">
+              <span className="text-xs text-muted-foreground">
+                Estimated cost: ~${estimate.toFixed(2)}
+              </span>
+              <div className="flex gap-1">
+                <Button type="button" variant="ghost" size="xs" onClick={() => setMode("menu")}>
+                  Back
+                </Button>
+                <Button
+                  type="button"
+                  size="xs"
+                  disabled={selected.size === 0}
+                  onClick={() => void regenerateArt()}
+                >
+                  Confirm
+                </Button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-2">
+            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              {busy ? <Loader2Icon className="size-3 animate-spin" /> : null}
+              {busy ? "Working…" : failed ? "Job failed." : "Done. New pixels are in the strip."}
+            </p>
+            <pre
+              ref={logRef}
+              className="max-h-48 overflow-auto whitespace-pre-wrap rounded-lg bg-muted p-2 font-mono text-[10px] leading-relaxed text-muted-foreground"
+            >
+              {log || "Starting…"}
+            </pre>
+            {!busy && mode === "done" && lastAction === "art" && selected.size > 0 ? (
+              <div className="flex flex-col gap-1 border-t border-border pt-2">
+                <p className="text-xs text-muted-foreground">Keep the new render, or go back:</p>
+                {[...selected].map((assetId) => {
+                  const asset = assets?.find((a) => a.id === assetId);
+                  return (
+                    <div key={assetId} className="flex items-center justify-between text-xs">
+                      <span className="truncate">{asset?.shared ? asset.label : assetId}</span>
+                      {restored.has(assetId) ? (
+                        <span className="text-muted-foreground">Restored previous</span>
+                      ) : (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="xs"
+                          onClick={() => void restorePrevious(assetId)}
+                        >
+                          Restore previous
+                        </Button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
+            {!busy ? (
+              <Button type="button" variant="outline" size="xs" onClick={() => setMode("menu")}>
+                Close
+              </Button>
+            ) : null}
+          </div>
+        )}
+      </PopoverContent>
+    </Popover>
   );
 }

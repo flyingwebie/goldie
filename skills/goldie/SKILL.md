@@ -352,6 +352,7 @@ the next prompt can build on it.
 | Another locale | `locales`, plus a `<locale>` key in every copy record | `capture`, `frame`, `preview`, `manifest` |
 | The app itself in each locale's language, not just the copy | `localizedCaptures: true` (iOS devices) | `capture`, `frame`, `preview`, `manifest` |
 | More emotional, less like a feature list | the Step 2.5 plan: hook headline, stressed words, kickers, frame-breaking layers (`references/storytelling.md`) | `frame`, `manifest` |
+| Recapture one screen, or regenerate just the AI art on it, without a full re-run | the lightbox's Redo button (Recapture screen / Regenerate art - the studio shows each asset's estimated cost before you confirm, and a "Restore previous" once it's done); by hand, `goldie capture --scene <id>` merges into the existing raw manifest, then `goldie art --only <id> --force --yes` | nothing - the studio runs `frame`/`manifest` itself after either action |
 | Point at one feature on a screen | a `callout` decoration cutting it from the capture | `frame`, `manifest` |
 | Illustrations, a mascot, 3D, a scene behind the phone | `art` assets (`references/art.md`), then `theme.backgroundImage` / `backdrop` / image decorations | `concepts` (to choose), `art`, `frame`, `manifest` |
 | A different art direction | `art.style`, then regenerate | `concepts`, `art --force`, `frame`, `manifest` |
@@ -359,11 +360,18 @@ the next prompt can build on it.
 | A video for social media or ads | `promo` (`references/promo.md`) | `promo` |
 | The app needs a login or tenant the flows cannot create | sign in once on the simulator, then `keepAppData: true` (iOS); flows start with `launch:` from that session | `capture`, `frame`, `manifest` |
 
-`capture` replays every flow; to re-capture only what changed, keep the
-other scenes as they are and accept the extra minute, or delete only the
-stale files under `out/raw/` before running it. `frame` and `manifest` take
-seconds, so run them freely. The studio at http://localhost:4321 picks up
-changes on reload; start it again with `GOLDIE_CONFIG` if it is not running.
+`capture` replays every flow; to re-capture only what changed, pass
+`--scene <id>` (repeatable with a comma: `--scene home,search`) to replay just
+those scenes' flows and merge the fresh captures into the existing raw
+manifest - every other scene's capture is left untouched. With `keepAppData`
+off, `capture` still reinstalls the app first even for a one-scene run, so
+that scene's flow must stand on its own (start with `launch:` and not assume
+state an earlier, now-unreplayed scene would have left behind) - the same
+convention every screenshot flow already follows. A `--scene` run also skips
+the preview segments unless the preview scene's own id is named. `frame` and
+`manifest` take seconds, so run them freely. The studio at
+http://localhost:4321 picks up changes on reload; start it again with
+`GOLDIE_CONFIG` if it is not running.
 
 The studio's Design panel writes to `goldie.design.json` next to the config,
 and the CLI's `--background` / `--frame` / `--font` / `--template` /

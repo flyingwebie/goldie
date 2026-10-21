@@ -33,7 +33,7 @@ const USAGE = `
 goldie - App Store screenshots and previews, driven by argent
 
   goldie doctor     Check the toolchain, simulators, flags and flows
-  goldie capture    Replay every scene flow and save raw captures
+  goldie capture    Replay every scene flow and save raw captures (--scene <id,id> to recapture only those, merged into the existing manifest)
   goldie frame      Composite raw screenshots into framed, captioned PNGs
   goldie preview    Join the raw clips into the preview video (App Store upload; YouTube for Play)
   goldie verify     Check finished assets against the store spec tables
@@ -129,7 +129,7 @@ async function main() {
       return (await doctor(cfg)) ? 0 : 1;
 
     case "capture":
-      await runCapture(cfg, devices, locales);
+      await runCapture(cfg, devices, locales, list(opt("scene")));
       return 0;
 
     case "frame":
@@ -247,11 +247,18 @@ function packageVersion(): string {
   return JSON.parse(readFileSync(pkg, "utf8")).version;
 }
 
-async function runCapture(cfg: LoadedConfig, devices: DeviceKey[], locales: string[]) {
+async function runCapture(
+  cfg: LoadedConfig,
+  devices: DeviceKey[],
+  locales: string[],
+  onlyScenes?: string[],
+) {
   for (const d of devices) {
     const udid = await device.resolveUdid(d);
     try {
-      for (const locale of captureLocales(cfg, d, locales)) await capture(cfg, d, locale);
+      for (const locale of captureLocales(cfg, d, locales)) {
+        await capture(cfg, d, locale, { onlyScenes });
+      }
     } finally {
       // Leave the device as it was found; a pinned status bar is sticky.
       await device.clearStatusBar(d, udid);
